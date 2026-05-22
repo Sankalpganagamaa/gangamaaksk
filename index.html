@@ -306,6 +306,44 @@ function Stock(props){
   var ef={id:null,name:'',category:'Seeds',subType:'',unit:'kg',stock:'',buyPrice:'',sellPrice:'',minStock:'5',gstRate:0,pieces:'',pieceSize:'',pieceSizeUnit:'g'};
   var s0=useState(false);var showF=s0[0];var setShowF=s0[1];
   var sb=useState(false);var showBulk=sb[0];var setShowBulk=sb[1];
+  var sbe=useState(false);var showBillEntry=sbe[0];var setShowBillEntry=sbe[1];
+  var sbi=useState(null);var billItems=sbi[0];var setBillItems=sbi[1];
+  var sbp=useState(null);var billPreview=sbp[0];var setBillPreview=sbp[1];
+  function newBillRow(){return {name:'',pieces:'',pieceSize:'',pieceSizeUnit:'g',buyPrice:'',sellPrice:'',gstRate:9,unit:'kg',category:'Pesticide',confirmed:false,productId:''};}
+  function addBillRow(){setBillItems(function(prev){return [...(prev||[]),newBillRow()];});}
+  function updBillItem(i,v){setBillItems(function(prev){return prev.map(function(it,idx){if(idx!==i)return it;var u=Object.assign({},it,v);if(v.category){u.gstRate=getGST(v.category).gst;}return u;});});}
+  function saveBillToStock(){
+    var valid=(billItems||[]).filter(function(it){return it.name&&it.confirmed;});
+    if(!valid.length)return alert('Please fill at least one product name and click confirm (✓)');
+    var newProds=valid.map(function(r){
+      var gi=getGST(r.category);
+      var gr=r.gstRate!=null?Number(r.gstRate):gi.gst;
+      var pc=Number(r.pieces)||0;var ps=Number(r.pieceSize)||0;var psu=r.pieceSizeUnit||'g';
+      var finalStock=pc>0&&ps>0?Math.round(pc*sib(ps,psu)*1000)/1000:0;
+      var existProd=r.productId?data.products.find(function(p){return p.id===r.productId;}):null;
+      if(existProd){
+        // Update existing product stock
+        return Object.assign({},existProd,{
+          stock:Math.round((Number(existProd.stock)||0)*1000+finalStock*1000)/1000,
+          buyPrice:Number(r.buyPrice)||existProd.buyPrice,
+          pieces:pc||existProd.pieces,
+          pieceSize:ps||existProd.pieceSize,
+          pieceSizeUnit:psu
+        });
+      } else {
+        return {id:genId(),name:r.name,category:r.category,subType:'',unit:r.unit,
+          stock:finalStock,buyPrice:Number(r.buyPrice)||0,sellPrice:Number(r.sellPrice)||0,
+          minStock:5,gstRate:gr,pieces:pc,pieceSize:ps,pieceSizeUnit:psu};
+      }
+    });
+    var existingIds=newProds.filter(function(p){return data.products.find(function(e){return e.id===p.id;});}).map(function(p){return p.id;});
+    var products=data.products.map(function(p){var updated=newProds.find(function(n){return n.id===p.id;});return updated||p;});
+    var brandNew=newProds.filter(function(p){return !existingIds.includes(p.id);});
+    products=[...products,...brandNew];
+    var nd=Object.assign({},data,{products:products});setData(nd);saveData(nd);
+    setShowBillEntry(false);setBillItems(null);
+    alert(newProds.length+' products updated in stock!');
+  }
   var sbd=useState('');var bulkDist=sbd[0];var setBulkDist=sbd[1];
   var sbdt=useState(toDay());var bulkDate=sbdt[0];var setBulkDate=sbdt[1];
   var sbpm=useState('cash');var bulkPayMode=sbpm[0];var setBulkPayMode=sbpm[1];
@@ -390,7 +428,8 @@ function Stock(props){
       h('select',{value:cat,onChange:function(ev){setCat(ev.target.value);},style:Object.assign({},IS,{width:'auto'})},
         h('option',null,'All'),...CATS.map(function(c){return h('option',{key:c},c);})
       ),
-      h(Btn,{onClick:function(){setShowBulk(true);}},'+ Add Products')
+      h(Btn,{onClick:function(){setShowBulk(true);}},'+ Add Products'),
+      h('button',{onClick:function(){setShowBillEntry(true);setBillItems(null);setBillPreview(null);},style:{padding:'9px 18px',border:'none',borderRadius:8,cursor:'pointer',fontWeight:500,fontSize:14,background:'#854F0B',color:'#fff'}},'📷 Upload Bill → Stock')
     ),
     h('div',{style:{overflowX:'auto'}},
       h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:1000}},
@@ -606,74 +645,151 @@ function Stock(props){
         )
       )
     ),
-        showF&&h(Modal,{title:form.id?'Edit Product':'Add Product',onClose:function(){setShowF(false);}},
-      h(Inp,{label:'Product name *',value:form.name,onChange:function(ev){sf({name:ev.target.value});},placeholder:'e.g. Saaf, Coragen, Urea'}),
-      h(Sel,{label:'Category',value:form.category,onChange:function(ev){var gi=getGST(ev.target.value);sf({category:ev.target.value,gstRate:gi.gst,subType:''});}},CATS.map(function(c){return h('option',{key:c},c);})),
-      form.category==='Fertilizer'&&h(Sel,{label:'Fertilizer type',value:form.subType,onChange:function(ev){sf({subType:ev.target.value});}},h('option',{value:''},'Select'),...FERT_TYPES.map(function(t){return h('option',{key:t},t);})),
-      form.category==='Zinc'&&h(Sel,{label:'Zinc type',value:form.subType,onChange:function(ev){sf({subType:ev.target.value});}},h('option',{value:''},'Select'),...ZINC_TYPES.map(function(t){return h('option',{key:t},t);})),
-      form.category==='Micronutrient'&&h(Sel,{label:'Micronutrient type',value:form.subType,onChange:function(ev){sf({subType:ev.target.value});}},h('option',{value:''},'Select'),...MICRO_TYPES.map(function(t){return h('option',{key:t},t);})),
-      h(Sel,{label:'Stock unit (kg or litre)',value:form.unit,onChange:function(ev){sf({unit:ev.target.value});}},['kg','litre','g','ml','piece','bag','box','bottle'].map(function(u){return h('option',{key:u},u);})),
-      h('div',{style:{background:'#FFF8E7',border:'1px solid #FAEEDA',borderRadius:10,padding:'14px',marginBottom:14}},
-        h('p',{style:{fontWeight:600,fontSize:13,margin:'0 0 10px',color:'#854F0B'}},'📦 Piece / Packet Details'),
-        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:8}},
-          h('div',null,h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Number of pieces / packets'),h('input',{type:'number',placeholder:'e.g. 6',value:form.pieces,onChange:function(ev){sf({pieces:ev.target.value});},style:IS})),
-          h('div',null,h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Size per piece'),h('div',{style:{display:'flex',gap:6}},h('input',{type:'number',placeholder:'e.g. 150',value:form.pieceSize,onChange:function(ev){sf({pieceSize:ev.target.value});},style:Object.assign({},IS,{flex:2})}),h('select',{value:form.pieceSizeUnit,onChange:function(ev){sf({pieceSizeUnit:ev.target.value});},style:Object.assign({},IS,{flex:1})},['ml','g','litre','kg'].map(function(u){return h('option',{key:u},u);}))))
-        ),
-        fTotalStock>0&&h('div',{style:{background:'#fff',border:'1px solid #FAEEDA',borderRadius:8,padding:'10px 12px',display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}},
-          h('span',{style:{fontSize:13,color:'#854F0B',fontWeight:500}},'📊 Stock:'),
-          h('span',{style:{fontSize:13,color:'#444'}},fpc+' pcs × '+fps+fpsu+' ='),
-          h('span',{style:{fontWeight:700,fontSize:16,color:'#185FA5'}},fmt(fTotalStock)+' '+form.unit),
-          h('span',{style:{fontSize:11,color:'#888',background:'#f0f4ff',padding:'2px 8px',borderRadius:20}},'saved to stock')
-        )
-      ),
-      h('div',{style:{marginBottom:14}},
-        h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:6}},'GST Rate % (auto by category)'),
-        h(GSTBtns,{value:form.gstRate,onChange:function(r){sf({gstRate:r});}}),
-        fgr>0&&h('p',{style:{fontSize:12,color:'#3C3489',marginTop:4,fontWeight:500}},'CGST '+fgr/2+'% + SGST '+fgr/2+'%')
-      ),
-      h('div',{style:{background:'#f5f8ff',border:'1px solid #d0e4ff',borderRadius:10,padding:'14px',marginBottom:14}},
-        h('p',{style:{fontWeight:600,fontSize:13,margin:'0 0 10px',color:'#185FA5'}},'💰 Buying Price (per piece, incl. GST)'),
-        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}},
-          h('div',null,h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Price per piece ₹'),h('input',{type:'number',placeholder:'e.g. 360',value:form.buyPrice,onChange:function(ev){sf({buyPrice:ev.target.value});},style:IS})),
-          h('div',{style:{background:'#fff',border:'0.5px solid #d0e4ff',borderRadius:8,padding:'8px 12px',display:'flex',flexDirection:'column',justifyContent:'center'}},
-            h('p',{style:{fontSize:11,color:'#888',margin:'0 0 3px'}},'Total buying price'),
-            h('p',{style:{fontSize:18,fontWeight:700,color:'#185FA5',margin:0}},'₹'+fmt(fBuyTotal)),
-            fpc>0&&fbp>0&&h('p',{style:{fontSize:11,color:'#888',margin:'3px 0 0'}},fpc+' × ₹'+fbp)
+        showBillEntry&&h(Modal,{title:'📷 Upload Bill → Fill Stock',wide:true,onClose:function(){setShowBillEntry(false);setBillItems(null);setBillPreview(null);}},
+      h('div',{style:{display:'grid',gridTemplateColumns:billPreview?'1fr 1.6fr':'1fr',gap:16}},
+        // Left: Upload area
+        h('div',null,
+          h('div',{style:{border:'2px dashed #854F0B',borderRadius:12,padding:'20px',textAlign:'center',marginBottom:12,background:'#FFF8E7',cursor:'pointer'},
+            onClick:function(){document.getElementById('billPhotoInput').click();}},
+            billPreview
+              ?h('img',{src:billPreview,style:{width:'100%',maxHeight:400,objectFit:'contain',borderRadius:8}})
+              :h('div',null,
+                h('div',{style:{fontSize:48,marginBottom:8}},'📸'),
+                h('p',{style:{fontWeight:600,fontSize:14,color:'#854F0B',margin:'0 0 4px'}},'Tap to upload bill photo'),
+                h('p',{style:{fontSize:12,color:'#888',margin:0}},'JPG, PNG — take photo of distributor bill')
+              ),
+            h('input',{type:'file',accept:'image/*',id:'billPhotoInput',style:{display:'none'},
+              onChange:function(ev){
+                var file=ev.target.files[0];if(!file)return;
+                var reader=new FileReader();
+                reader.onload=function(e){setBillPreview(e.target.result);};
+                reader.readAsDataURL(file);
+              }
+            })
+          ),
+          billPreview&&h('div',{style:{background:'#f5f8ff',borderRadius:8,padding:'10px 12px',fontSize:12,color:'#555',lineHeight:1.8}},
+            h('p',{style:{fontWeight:600,color:'#185FA5',margin:'0 0 6px'}},'📖 How to read Hindi bill:'),
+            h('p',{style:{margin:'0 0 4px'}},'1. Open Google Lens on your phone'),
+            h('p',{style:{margin:'0 0 4px'}},'2. Point at the bill photo'),
+            h('p',{style:{margin:'0 0 4px'}},'3. Lens reads text automatically'),
+            h('p',{style:{margin:'0 0 8px'}},'4. Enter each product in table →'),
+            h('button',{onClick:function(){window.open('https://lens.google.com','_blank');},
+              style:{width:'100%',background:'#4285F4',color:'#fff',border:'none',borderRadius:8,padding:'8px',cursor:'pointer',fontSize:13,fontWeight:600,marginBottom:6}},'🔍 Open Google Lens'),
+            h('button',{onClick:function(){window.open('https://translate.google.com/?sl=hi&tl=en&op=translate','_blank');},
+              style:{width:'100%',background:'#34A853',color:'#fff',border:'none',borderRadius:8,padding:'8px',cursor:'pointer',fontSize:13,fontWeight:600}},'🌐 Translate Hindi Bill')
           )
         ),
-        fbp>0&&fgr>0&&h('div',{style:{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}},
-          h('span',{style:{background:'#fff',border:'0.5px solid #ddd',borderRadius:6,padding:'4px 10px',fontSize:12,color:'#444'}},'Base: ₹'+fmt(fBuyBase)),
-          h('span',{style:{background:'#EEEDFE',borderRadius:6,padding:'4px 10px',fontSize:12,color:'#3C3489'}},'CGST '+fgr/2+'%: ₹'+fmt(fBuyCGST)),
-          h('span',{style:{background:'#EEEDFE',borderRadius:6,padding:'4px 10px',fontSize:12,color:'#3C3489'}},'SGST '+fgr/2+'%: ₹'+fmt(fBuySGST))
-        )
-      ),
-      h('div',{style:{background:'#f0fff4',border:'1px solid #b7ebc8',borderRadius:10,padding:'14px',marginBottom:14}},
-        h('p',{style:{fontWeight:600,fontSize:13,margin:'0 0 10px',color:'#3B6D11'}},'🏷️ Selling Price (per piece, incl. GST)'),
-        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}},
-          h('div',null,h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Price per piece ₹'),h('input',{type:'number',placeholder:'e.g. 450',value:form.sellPrice,onChange:function(ev){sf({sellPrice:ev.target.value});},style:IS})),
-          h('div',{style:{background:'#fff',border:'0.5px solid #b7ebc8',borderRadius:8,padding:'8px 12px',display:'flex',flexDirection:'column',justifyContent:'center'}},
-            h('p',{style:{fontSize:11,color:'#888',margin:'0 0 3px'}},'Total selling price'),
-            h('p',{style:{fontSize:18,fontWeight:700,color:'#3B6D11',margin:0}},'₹'+fmt(fSellTotal)),
-            fpc>0&&fsp>0&&h('p',{style:{fontSize:11,color:'#888',margin:'3px 0 0'}},fpc+' × ₹'+fsp)
+        // Right: Entry table
+        h('div',null,
+          h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}},
+            h('p',{style:{fontWeight:600,fontSize:14,margin:0}},'Fill Products from Bill'),
+            h('div',{style:{display:'flex',gap:6}},
+              h('button',{onClick:addBillRow,style:{background:'#E6F1FB',color:'#185FA5',border:'none',borderRadius:6,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:600}},'+ Row'),
+              h('span',{style:{fontSize:12,color:'#888',padding:'5px 0'}},billItems?billItems.length+' items':'0 items')
+            )
+          ),
+          !billItems&&h('div',{style:{textAlign:'center',padding:'30px',background:'#fafafa',borderRadius:8,border:'1px dashed #ddd'}},
+            h('p',{style:{fontSize:13,color:'#888',margin:'0 0 10px'}},'Upload bill photo first, then click "+ Row" to start entering products'),
+            h('button',{onClick:addBillRow,style:{background:'#185FA5',color:'#fff',border:'none',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:600}},'+ Start Entering Products')
+          ),
+          billItems&&h('div',null,
+            h('div',{style:{overflowX:'auto',marginBottom:8,maxHeight:'55vh',overflowY:'auto'}},
+              h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12}},
+                h('thead',{style:{position:'sticky',top:0,zIndex:10}},
+                  h('tr',{style:{background:'#854F0B'}},
+                    ['Product','Cat','Pcs','Size','Buy Rs','Sell Rs','GST','Qty','Match','✓',''].map(function(hd){
+                      return h('th',{key:hd,style:{padding:'6px 4px',color:'#fff',fontWeight:500,textAlign:'left',whiteSpace:'nowrap',fontSize:11}},hd);
+                    })
+                  )
+                ),
+                h('tbody',null,billItems.map(function(item,i){
+                  var gr=Number(item.gstRate)||9;
+                  var pc=Number(item.pieces)||0;
+                  var ps=Number(item.pieceSize)||0;
+                  var psu=item.pieceSizeUnit||'g';
+                  var sib5=psu==='g'?ps/1000:psu==='ml'?ps/1000:ps;
+                  var autoQty=pc>0&&ps>0?Math.round(pc*sib5*1000)/1000:0;
+                  var bp=Number(item.buyPrice)||0;
+                  var sp=Number(item.sellPrice)||0;
+                  var IS4={width:'100%',padding:'4px 4px',border:'0.5px solid #ddd',borderRadius:4,fontSize:11,outline:'none',background:item.confirmed?'#f0fff4':'#fff',boxSizing:'border-box'};
+                  return h('tr',{key:i,style:{borderBottom:'0.5px solid #eee',background:item.confirmed?'#f0fff4':'transparent'}},
+                    h('td',{style:{padding:'2px 3px',minWidth:90}},
+                      h('input',{value:item.name||'',onChange:function(ev){updBillItem(i,{name:ev.target.value});},placeholder:'e.g. Tapuz',style:IS4})
+                    ),
+                    h('td',{style:{padding:'2px 3px',minWidth:80}},
+                      h('select',{value:item.category||'Pesticide',onChange:function(ev){updBillItem(i,{category:ev.target.value});},style:Object.assign({},IS4,{padding:'4px 2px'})},
+                        CATS.map(function(cat){return h('option',{key:cat,value:cat},cat.slice(0,8));})
+                      )
+                    ),
+                    h('td',{style:{padding:'2px 3px',width:45}},
+                      h('input',{type:'number',value:item.pieces||'',onChange:function(ev){updBillItem(i,{pieces:ev.target.value});},placeholder:'10',style:IS4})
+                    ),
+                    h('td',{style:{padding:'2px 3px',width:95}},
+                      h('div',{style:{display:'flex',gap:2}},
+                        h('input',{type:'number',value:item.pieceSize||'',onChange:function(ev){updBillItem(i,{pieceSize:ev.target.value});},placeholder:'250',style:Object.assign({},IS4,{flex:2})}),
+                        h('select',{value:item.pieceSizeUnit||'g',onChange:function(ev){updBillItem(i,{pieceSizeUnit:ev.target.value});},style:Object.assign({},IS4,{flex:1,padding:'4px 1px'})},
+                          ['g','ml','kg','l'].map(function(u){return h('option',{key:u,value:u==='l'?'litre':u},u);})
+                        )
+                      )
+                    ),
+                    h('td',{style:{padding:'2px 3px',width:65}},
+                      h('div',null,
+                        h('input',{type:'number',value:item.buyPrice||'',onChange:function(ev){updBillItem(i,{buyPrice:ev.target.value});},placeholder:'360',style:IS4}),
+                        pc>0&&bp>0&&h('p',{style:{fontSize:9,color:'#854F0B',margin:'1px 0 0',whiteSpace:'nowrap'}},'=Rs.'+fmt(pc*bp))
+                      )
+                    ),
+                    h('td',{style:{padding:'2px 3px',width:65}},
+                      h('div',null,
+                        h('input',{type:'number',value:item.sellPrice||'',onChange:function(ev){updBillItem(i,{sellPrice:ev.target.value});},placeholder:'450',style:IS4}),
+                        pc>0&&sp>0&&h('p',{style:{fontSize:9,color:'#3B6D11',margin:'1px 0 0',whiteSpace:'nowrap'}},'=Rs.'+fmt(pc*sp))
+                      )
+                    ),
+                    h('td',{style:{padding:'2px 3px',width:46}},
+                      h('select',{value:String(item.gstRate||9),onChange:function(ev){updBillItem(i,{gstRate:Number(ev.target.value)});},style:Object.assign({},IS4,{padding:'4px 1px'})},
+                        [0,5,9,12,18].map(function(r){return h('option',{key:r,value:r},r+'%');})
+                      )
+                    ),
+                    h('td',{style:{padding:'4px 3px',textAlign:'center',background:'#f0f4ff',fontWeight:600,color:'#185FA5',fontSize:11,whiteSpace:'nowrap'}},
+                      autoQty>0?(fmt(autoQty)+' '+(item.unit||'kg')):h('span',{style:{color:'#bbb',fontWeight:400}},'—')
+                    ),
+                    h('td',{style:{padding:'2px 3px',minWidth:100}},
+                      h('select',{value:item.productId||'',onChange:function(ev){updBillItem(i,{productId:ev.target.value});},
+                        style:Object.assign({},IS4,{borderColor:item.productId?'#b7ebc8':'#ffcccc',padding:'4px 2px',fontSize:10})},
+                        h('option',{value:''},'New'),
+                        data.products.map(function(p){return h('option',{key:p.id,value:p.id},p.name.slice(0,14)+(p.subType?'('+p.subType.slice(0,6)+')':''));})
+                      )
+                    ),
+                    h('td',{style:{padding:'2px 3px',textAlign:'center'}},
+                      h('button',{onClick:function(){updBillItem(i,{confirmed:!item.confirmed});},
+                        style:{background:item.confirmed?'#3B6D11':'#ddd',color:item.confirmed?'#fff':'#555',border:'none',borderRadius:4,padding:'4px 8px',cursor:'pointer',fontSize:13,fontWeight:700,minWidth:30}},
+                        item.confirmed?'✓':'○')
+                    ),
+                    h('td',{style:{padding:'2px 3px',textAlign:'center'}},
+                      h('button',{onClick:function(){setBillItems(function(prev){return prev.filter(function(_,idx2){return idx2!==i;});});},
+                        style:{background:'#FCEBEB',color:'#A32D2D',border:'none',borderRadius:4,padding:'4px 6px',cursor:'pointer',fontSize:11}},'✕')
+                    )
+                  );
+                }))
+              )
+            ),
+            // Summary bar
+            h('div',{style:{background:'#f5f8ff',borderRadius:8,padding:'8px 12px',marginBottom:10,display:'flex',gap:12,flexWrap:'wrap',fontSize:12}},
+              h('span',{style:{color:'#555'}},'Items: '+billItems.length),
+              h('span',{style:{color:'#3B6D11',fontWeight:600}},'Confirmed: '+billItems.filter(function(it){return it.confirmed;}).length),
+              h('span',{style:{color:'#854F0B',fontWeight:600}},'Buy Total: Rs.'+fmt(billItems.reduce(function(s,it){var pc3=Number(it.pieces)||0;var ps3=Number(it.pieceSize)||0;var psu3=it.pieceSizeUnit||'g';var sib6=psu3==='g'?ps3/1000:psu3==='ml'?ps3/1000:ps3;return s+(pc3>0&&ps3>0?pc3*sib6*(Number(it.buyPrice)||0):0);},0))),
+              h('span',{style:{color:'#3B6D11',fontWeight:600}},'Sell Total: Rs.'+fmt(billItems.reduce(function(s,it){var pc4=Number(it.pieces)||0;var ps4=Number(it.pieceSize)||0;var psu4=it.pieceSizeUnit||'g';var sib7=psu4==='g'?ps4/1000:psu4==='ml'?ps4/1000:ps4;return s+(pc4>0&&ps4>0?pc4*sib7*(Number(it.sellPrice)||0):0);},0)))
+            ),
+            h('div',{style:{display:'flex',gap:8,justifyContent:'flex-end'}},
+              h(Btn,{variant:'secondary',onClick:function(){setShowBillEntry(false);setBillItems(null);setBillPreview(null);}},'Cancel'),
+              h(Btn,{onClick:saveBillToStock},'💾 Save '+billItems.filter(function(it){return it.confirmed&&it.name;}).length+' Products to Stock')
+            )
           )
-        ),
-        fsp>0&&fgr>0&&h('div',{style:{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}},
-          h('span',{style:{background:'#fff',border:'0.5px solid #ddd',borderRadius:6,padding:'4px 10px',fontSize:12,color:'#444'}},'Base: ₹'+fmt(fSellBase)),
-          h('span',{style:{background:'#EEEDFE',borderRadius:6,padding:'4px 10px',fontSize:12,color:'#3C3489'}},'CGST '+fgr/2+'%: ₹'+fmt(fSellCGST)),
-          h('span',{style:{background:'#EEEDFE',borderRadius:6,padding:'4px 10px',fontSize:12,color:'#3C3489'}},'SGST '+fgr/2+'%: ₹'+fmt(fSellSGST))
-        ),
-        fbp>0&&fsp>0&&h('div',{style:{marginTop:8,padding:'8px 12px',background:fProfit>=0?'#EAF3DE':'#FCEBEB',borderRadius:8,display:'flex',gap:16,flexWrap:'wrap'}},
-          h('span',{style:{fontSize:13,color:fProfit>=0?'#3B6D11':'#A32D2D'}},'Per piece profit: ₹'+fmt(fProfit)),
-          fpc>1&&h('span',{style:{fontSize:13,fontWeight:600,color:fTotalProfit>=0?'#3B6D11':'#A32D2D'}},'Total profit ('+fpc+' pcs): ₹'+fmt(fTotalProfit))
         )
-      ),
-      h(Inp,{label:'Min stock alert ('+form.unit+')',type:'number',value:form.minStock,onChange:function(ev){sf({minStock:ev.target.value});},placeholder:'5'}),
-      h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end'}},h(Btn,{variant:'secondary',onClick:function(){setShowF(false);}},'Cancel'),h(Btn,{onClick:save},'Save Product'))
+      )
     )
   );
 }
 
-// ── DISTRIBUTORS ────────────────────────────────────────────────────────────
 function Distributors(props){
   var data=props.data;var setData=props.setData;
   var ef={id:null,name:'',phone:'',address:'',company:''};
@@ -698,6 +814,23 @@ function Distributors(props){
     setShowQA(false);setQaForm(qaEf);
     alert('Product "'+newProd.name+'" added! Now select it from the dropdown.');
   }
+  function downloadDistSheet(distId,distName){
+    var purchases=data.purchases.filter(function(p){return p.distributorId===distId;});
+    if(!purchases.length)return alert('No purchase records found for this distributor');
+    var nl=String.fromCharCode(10);
+    var rows=[['Date','Product','Category','Pieces','Size/pc','Total Qty','Unit','Rate/unit','Total (incl GST)','Base','CGST','SGST','GST%','Payment','Stock Added']];
+    purchases.forEach(function(purch){
+      (purch.items||[]).forEach(function(it){
+        var prod=data.products.find(function(p){return p.id===it.productId;})||{name:'Unknown',category:'',unit:'kg'};
+        rows.push([purch.date,prod.name,prod.category||'',it.pieces||'',(it.pieceSize?it.pieceSize+(it.pieceSizeUnit||'g'):''),fmt(it.qty||0),prod.unit||'kg',fmt(it.ratePerUnit||0),fmt(it.totalWithGst||0),fmt(it.totalBase||0),fmt(it.cgstPaid||0),fmt(it.sgstPaid||0),(it.gstRate||0)+'%',purch.paymentMode||'cash',purch.stockAdded?'Yes':'No']);
+      });
+    });
+    var csv=rows.map(function(r){return r.map(function(cell){var s=String(cell).replace(/"/g,'""');return '"'+s+'"';}).join(',');}).join(nl);
+    var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download=distName.replace(/[^a-zA-Z0-9]/g,'_')+'_purchases_'+toDay()+'.csv';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+  }
   function saveDist(){
     if(!form.name)return alert('Name required');
     var distributors=form.id?data.distributors.map(function(d){return d.id===form.id?form:d;}):[...data.distributors,Object.assign({},form,{id:genId()})];
@@ -710,14 +843,11 @@ function Distributors(props){
     var vi=pf.items.filter(function(it){return it.productId&&it.price&&(it.pieces||it.qty);});
     if(!vi.length)return alert('Add at least one product');
     var viC=vi.map(function(it){
-      var gr=Number(it.gstRate)||0;
-      var psu=it.pieceSizeUnit||'g';var ps=Number(it.pieceSize)||0;var pc=Number(it.pieces)||0;
+      var gr=Number(it.gstRate)||0;var psu=it.pieceSizeUnit||'g';var ps=Number(it.pieceSize)||0;var pc=Number(it.pieces)||0;
       var totalQty=pc>0&&ps>0?Math.round(pc*sib(ps,psu)*1000)/1000:(Number(it.qty)||0);
-      var ratePerUnit=Number(it.price);
-      var totalIncl=totalQty*ratePerUnit;
-      var totalBase=gr>0?totalIncl*100/(100+gr):totalIncl;
-      var totalCgst=totalBase*gr/2/100;var totalSgst=totalBase*gr/2/100;
-      return Object.assign({},it,{qty:totalQty,gstRate:gr,ratePerUnit:ratePerUnit,totalBase:totalBase,cgstPaid:totalCgst,sgstPaid:totalSgst,gstPaid:totalCgst+totalSgst,totalWithGst:totalIncl});
+      var ratePerUnit=Number(it.price);var totalIncl=totalQty*ratePerUnit;
+      var totalBase=gr>0?totalIncl*100/(100+gr):totalIncl;var totalCgst=totalBase*gr/2/100;
+      return Object.assign({},it,{qty:totalQty,gstRate:gr,ratePerUnit:ratePerUnit,totalBase:totalBase,cgstPaid:totalCgst,sgstPaid:totalCgst,gstPaid:totalCgst*2,totalWithGst:totalIncl});
     });
     var totalAmount=viC.reduce(function(s,it){return s+it.totalWithGst;},0);
     var totalGstPaid=viC.reduce(function(s,it){return s+it.gstPaid;},0);
@@ -726,7 +856,6 @@ function Distributors(props){
   }
   function finishPurch(addToStock){
     var purchase=stockQ.purchase;var viC=stockQ.viC;
-    // if payment mode is due, paid=0; otherwise paid=totalAmount
     var paidAmt=purchase.paymentMode==='due'?0:(Number(purchase.paid)||purchase.totalAmount);
     var finalPurchase=Object.assign({},purchase,{stockAdded:addToStock,paid:paidAmt});
     var products=data.products;
@@ -746,7 +875,6 @@ function Distributors(props){
     var purchases=data.purchases.map(function(p){return p.distributorId!==id?p:Object.assign({},p,{paid:p.totalAmount});});
     var nd=Object.assign({},data,{purchases:purchases});setData(nd);saveData(nd);
   }
-  // Computed purchase totals
   var purBase=0,purCGST=0,purSGST=0,purTotal=0;
   pf.items.forEach(function(it){
     var gr=Number(it.gstRate)||0;var psu=it.pieceSizeUnit||'g';var ps=Number(it.pieceSize)||0;var pc=Number(it.pieces)||0;
@@ -756,22 +884,25 @@ function Distributors(props){
   });
   return h('div',null,
     h('div',{style:{display:'flex',justifyContent:'flex-end',marginBottom:16}},h(Btn,{onClick:function(){setForm(ef);setShowF(true);}},'+ Add Distributor')),
-    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(250px,1fr))',gap:12}},
-      data.distributors.length===0?h('p',{style:{color:'#aaa',fontSize:14}},'No distributors yet'):
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:12}},
+      data.distributors.length===0?h('p',{style:{color:'#aaa',fontSize:14}},'No distributors yet. Add your first distributor.'):
       data.distributors.map(function(d){
-        var du=due(d.id);var bought=data.purchases.filter(function(p){return p.distributorId===d.id;}).reduce(function(s,p){return s+p.totalAmount;},0);
+        var du=due(d.id);
+        var bought=data.purchases.filter(function(p){return p.distributorId===d.id;}).reduce(function(s,p){return s+p.totalAmount;},0);
         var dPurchases=data.purchases.filter(function(p){return p.distributorId===d.id;});
         var showHistory=expandedDist===d.id;
-        return h(Card,{key:d.id,style:{marginBottom:12}},
+        return h(Card,{key:d.id,style:{marginBottom:4}},
           h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8}},
             h('div',null,
               h('p',{style:{fontWeight:600,fontSize:15,margin:'0 0 2px'}},d.name),
               d.company&&h('p',{style:{fontSize:12,color:'#888',margin:0}},d.company),
               d.phone&&h('p',{style:{fontSize:12,color:'#555',margin:'2px 0 0'}},'📞 '+d.phone)
             ),
-            h('div',{style:{display:'flex',gap:6}},
+            h('div',{style:{display:'flex',gap:6,flexWrap:'wrap'}},
               h(Btn,{small:true,onClick:function(){setForm(Object.assign({},d));setShowF(true);}},'Edit'),
-              h(Btn,{small:true,onClick:function(){setShowP(d.id);setPf(ep);}},'+Purchase')
+              h(Btn,{small:true,onClick:function(){setShowP(d.id);setPf(ep);}},'+Purchase'),
+              h('button',{onClick:function(){downloadDistSheet(d.id,d.name);},
+                style:{background:'#EAF3DE',color:'#3B6D11',border:'none',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11,fontWeight:600}},'⬇️ Sheet')
             )
           ),
           h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}},
@@ -780,10 +911,10 @@ function Distributors(props){
               h('p',{style:{fontSize:15,fontWeight:600,color:'#185FA5',margin:0}},'₹'+fmt(bought))
             ),
             du>0?h('div',{style:{background:'#FCEBEB',borderRadius:8,padding:'8px 10px',textAlign:'center'}},
-              h('p',{style:{fontSize:10,color:'#A32D2D',margin:'0 0 2px'}},'⚠️ Amount Due'),
+              h('p',{style:{fontSize:10,color:'#A32D2D',margin:'0 0 2px'}},'⚠️ Due'),
               h('p',{style:{fontSize:15,fontWeight:600,color:'#A32D2D',margin:0}},'₹'+fmt(du))
             ):h('div',{style:{background:'#EAF3DE',borderRadius:8,padding:'8px 10px',textAlign:'center'}},
-              h('p',{style:{fontSize:10,color:'#3B6D11',margin:'0 0 2px'}},'Payment Status'),
+              h('p',{style:{fontSize:10,color:'#3B6D11',margin:'0 0 2px'}},'Payment'),
               h('p',{style:{fontSize:13,fontWeight:500,color:'#3B6D11',margin:0}},'✓ All Clear')
             )
           ),
@@ -805,64 +936,42 @@ function Distributors(props){
                 ),
                 h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:11,marginBottom:6}},
                   h('thead',null,h('tr',{style:{background:'#e8eef8'}},
-                    ['Product','Qty (Pieces × Size)','Rate/unit','Total (incl GST)'].map(function(hd){return h('th',{key:hd,style:{padding:'4px 6px',textAlign:'left',fontWeight:500,fontSize:11}},hd);})
+                    ['Product','Qty (Pieces × Size)','Rate','Total'].map(function(hd){return h('th',{key:hd,style:{padding:'4px 6px',textAlign:'left',fontWeight:500,fontSize:11}},hd);})
                   )),
                   h('tbody',null,purch.items.map(function(it,ii){
                     var prod=data.products.find(function(p){return p.id===it.productId;})||null;
                     var unit=prod?prod.unit:'kg';
-                    var pc=Number(it.pieces)||0;
-                    var ps=Number(it.pieceSize)||0;
-                    var psu=it.pieceSizeUnit||'g';
-                    var qty=Number(it.qty)||0;
-                    var ratePerUnit=Number(it.ratePerUnit)||0;
-                    var total=Number(it.totalWithGst)||0;
-                    // ratePerUnit is rate per kg/litre
-                    // price per piece = ratePerUnit × sizeInBase
-                    var sizeInBase=psu==='g'?ps/1000:psu==='ml'?ps/1000:ps;
-                    var pricePerPiece=sizeInBase>0?ratePerUnit*sizeInBase:ratePerUnit;
-                    // recalculate correct total = pieces × pricePerPiece
-                    var correctTotal=pc>0?pc*pricePerPiece:total;
+                    var pc=Number(it.pieces)||0;var ps=Number(it.pieceSize)||0;var psu=it.pieceSizeUnit||'g';
+                    var qty=Number(it.qty)||0;var rate=Number(it.ratePerUnit)||0;
+                    var sizeB=psu==='g'?ps/1000:psu==='ml'?ps/1000:ps;
+                    var pricePerPc=sizeB>0?rate*sizeB:rate;
+                    var correctTotal=pc>0?pc*pricePerPc:(Number(it.totalWithGst)||0);
                     return h('tr',{key:ii,style:{borderBottom:'0.5px solid #eee'}},
                       h('td',{style:{padding:'4px 6px',fontWeight:500}},prod?prod.name:'Product'),
                       h('td',{style:{padding:'4px 6px'}},
-                        pc>0&&ps>0
-                          ?h('div',null,
-                            h('p',{style:{margin:'0 0 1px',fontSize:11,color:'#666'}},pc+' pcs × '+ps+psu),
-                            h('p',{style:{margin:0,fontWeight:500,color:'#185FA5'}},fmt(qty)+' '+unit)
-                          )
-                          :fmt(qty)+' '+unit
+                        pc>0&&ps>0?h('div',null,h('p',{style:{margin:'0 0 1px',fontSize:11,color:'#666'}},pc+' pcs × '+ps+psu),h('p',{style:{margin:0,fontWeight:500,color:'#185FA5'}},fmt(qty)+' '+unit)):fmt(qty)+' '+unit
                       ),
                       h('td',{style:{padding:'4px 6px'}},
-                        pc>0&&ps>0
-                          ?h('div',null,
-                            h('p',{style:{margin:'0 0 1px',fontWeight:600,color:'#333'}},'₹'+fmt(pricePerPiece)+'/pc'),
-                            h('p',{style:{margin:0,fontSize:11,color:'#888'}},'₹'+fmt(ratePerUnit)+'/'+unit)
-                          )
-                          :'₹'+fmt(ratePerUnit)+'/'+unit
+                        pc>0&&ps>0?h('div',null,h('p',{style:{margin:'0 0 1px',fontWeight:600,color:'#333'}},'₹'+fmt(pricePerPc)+'/pc'),h('p',{style:{margin:0,fontSize:11,color:'#888'}},'₹'+fmt(rate)+'/'+unit)):'₹'+fmt(rate)+'/'+unit
                       ),
-                      h('td',{style:{padding:'4px 6px',color:'#185FA5',fontWeight:600}},
-                        h('p',{style:{margin:'0 0 1px'}},'₹'+fmt(correctTotal>0?correctTotal:total)),
-                        pc>0&&h('p',{style:{margin:0,fontSize:10,color:'#888'}},pc+' × ₹'+fmt(pricePerPiece))
-                      )
+                      h('td',{style:{padding:'4px 6px',color:'#185FA5',fontWeight:600}},'₹'+fmt(correctTotal))
                     );
                   }))
                 ),
                 h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:6,borderTop:'0.5px solid #ddd'}},
                   h('div',null,
-                    h('span',{style:{fontSize:11,color:'#888'}},'GST paid: ₹'+fmt(purch.totalGstPaid||0)),
+                    h('span',{style:{fontSize:11,color:'#888'}},'GST: ₹'+fmt(purch.totalGstPaid||0)),
                     (purch.totalAmount-(purch.paid||0))>0&&h('span',{style:{fontSize:11,color:'#A32D2D',marginLeft:8}},'Due: ₹'+fmt(purch.totalAmount-(purch.paid||0)))
                   ),
                   h('div',{style:{display:'flex',alignItems:'center',gap:8}},
                     h('span',{style:{fontWeight:700,fontSize:13,color:'#185FA5'}},'₹'+fmt(purch.totalAmount)),
                     h('button',{
                       onClick:function(){
-                        if(!confirm('Delete this purchase bill of ₹'+fmt(purch.totalAmount)+' dated '+purch.date+'?\nThis will NOT reverse stock changes.'))return;
+                        if(!confirm('Delete this bill of ₹'+fmt(purch.totalAmount)+' dated '+purch.date+'?'))return;
                         var purchases=data.purchases.filter(function(p){return p.id!==purch.id;});
-                        var nd=Object.assign({},data,{purchases:purchases});
-                        setData(nd);saveData(nd);
+                        var nd=Object.assign({},data,{purchases:purchases});setData(nd);saveData(nd);
                       },
-                      style:{background:'#FCEBEB',color:'#A32D2D',border:'none',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:12,fontWeight:500}
-                    },'🗑️ Delete')
+                      style:{background:'#FCEBEB',color:'#A32D2D',border:'none',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:12}},'🗑️ Delete')
                   )
                 )
               );
@@ -887,10 +996,9 @@ function Distributors(props){
         var psu=item.pieceSizeUnit||'g';var ps=Number(item.pieceSize)||0;var pc=Number(item.pieces)||0;
         var totalQty=pc>0&&ps>0?Math.round(pc*sib(ps,psu)*1000)/1000:0;
         var baseUnit=prod?prod.unit:(psu==='g'||psu==='kg'?'kg':'litre');
-        var rate=Number(item.price)||0;
-        var totalPrice=totalQty*rate;
+        var rate=Number(item.price)||0;var totalPrice=totalQty*rate;
         var totalBase=gr>0?totalPrice*100/(100+gr):totalPrice;
-        var totalCgst=totalBase*gr/2/100;var totalSgst=totalBase*gr/2/100;
+        var totalCgst=totalBase*gr/2/100;
         return h('div',{key:i,style:{background:'#fff',border:'1px solid #e0e8ff',borderRadius:10,padding:'12px',marginBottom:12}},
           h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}},
             h('span',{style:{fontWeight:600,fontSize:13,color:'#185FA5'}},'Item '+(i+1)),
@@ -900,13 +1008,10 @@ function Distributors(props){
             h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Product'),
             h('select',{value:item.productId,onChange:function(ev){var pr=data.products.find(function(x){return x.id===ev.target.value;})||null;var g=pr?(pr.gstRate!=null?Number(pr.gstRate):getGST(pr.category).gst):9;var pu=pr?pr.unit:'kg';var defPsu=pu==='litre'?'ml':'g';upItem(i,{productId:ev.target.value,gstRate:g,pieceSizeUnit:defPsu});},style:Object.assign({},IS,{fontSize:13})},
               h('option',{value:''},'-- Select product --'),
-              data.products.map(function(p){return h('option',{key:p.id,value:p.id},p.name+(p.subType?' ('+p.subType+')':'')+' ['+p.category+']');})
-            )
-          ),
-          h('div',{style:{marginBottom:8}},
-            h('button',{type:'button',onClick:function(){setShowQA(true);},
-              style:{fontSize:12,color:'#185FA5',background:'#E6F1FB',border:'none',borderRadius:6,padding:'5px 12px',cursor:'pointer',fontWeight:500}},
-              '+ Add new product not in stock')
+              data.products.map(function(p){return h('option',{key:p.id,value:p.id},p.name+(p.subType?' ('+p.subType+')':'')+' ['+p.category+']');}),
+              h('option',{value:'__new__'},'+ Add new product not in stock')
+            ),
+            item.productId==='__new__'&&h('button',{onClick:function(){setShowQA(true);},style:{marginTop:6,background:'#E6F1FB',color:'#185FA5',border:'none',borderRadius:6,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:500}},'+ Quick Add New Product')
           ),
           h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:8}},
             h('div',null,h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'No. of pieces'),h('input',{type:'number',placeholder:'e.g. 10',value:item.pieces||'',onChange:function(ev){upItem(i,{pieces:ev.target.value});},style:Object.assign({},IS,{fontSize:13})})),
@@ -918,13 +1023,13 @@ function Distributors(props){
             h('div',null,h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Total price (auto)'),h('div',{style:Object.assign({},IS,{background:totalPrice>0?'#EAF3DE':'#f9f9f9',color:'#3B6D11',fontWeight:700,fontSize:16,cursor:'default',display:'flex',alignItems:'center',minHeight:40})},totalPrice>0?'₹'+fmt(totalPrice):h('span',{style:{color:'#bbb',fontWeight:400,fontSize:12}},'auto')))
           ),
           h('div',{style:{marginBottom:totalPrice>0?8:0}},
-            h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:4}},'GST % (auto from product):'),
+            h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:4}},'GST %:'),
             h('div',{style:{display:'flex',gap:6,flexWrap:'wrap'}},[0,5,9,12,18].map(function(r){return h('button',{key:r,type:'button',onClick:function(){upItem(i,{gstRate:r});},style:{padding:'4px 12px',border:'1.5px solid '+(gr===r?'#185FA5':'#ddd'),borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:gr===r?600:400,background:gr===r?'#185FA5':'#fff',color:gr===r?'#fff':'#555'}},r+'%');}))
           ),
           totalPrice>0&&h('div',{style:{background:'#f5f8ff',borderRadius:8,padding:'8px 10px',display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6}},
             h('div',{style:{textAlign:'center'}},h('p',{style:{fontSize:10,color:'#888',margin:'0 0 2px'}},'Base'),h('p',{style:{fontSize:12,fontWeight:600,color:'#333',margin:0}},'₹'+fmt(totalBase))),
             h('div',{style:{textAlign:'center',background:'#EEEDFE',borderRadius:6,padding:'3px'}},h('p',{style:{fontSize:10,color:'#3C3489',margin:'0 0 2px'}},'CGST '+gr/2+'%'),h('p',{style:{fontSize:12,fontWeight:600,color:'#3C3489',margin:0}},'₹'+fmt(totalCgst))),
-            h('div',{style:{textAlign:'center',background:'#EEEDFE',borderRadius:6,padding:'3px'}},h('p',{style:{fontSize:10,color:'#3C3489',margin:'0 0 2px'}},'SGST '+gr/2+'%'),h('p',{style:{fontSize:12,fontWeight:600,color:'#3C3489',margin:0}},'₹'+fmt(totalSgst))),
+            h('div',{style:{textAlign:'center',background:'#EEEDFE',borderRadius:6,padding:'3px'}},h('p',{style:{fontSize:10,color:'#3C3489',margin:'0 0 2px'}},'SGST '+gr/2+'%'),h('p',{style:{fontSize:12,fontWeight:600,color:'#3C3489',margin:0}},'₹'+fmt(totalCgst))),
             h('div',{style:{textAlign:'center',background:'#185FA5',borderRadius:6,padding:'3px'}},h('p',{style:{fontSize:10,color:'rgba(255,255,255,0.8)',margin:'0 0 2px'}},'Total incl GST'),h('p',{style:{fontSize:12,fontWeight:600,color:'#fff',margin:0}},'₹'+fmt(totalPrice)))
           )
         );
@@ -933,22 +1038,18 @@ function Distributors(props){
       h('div',{style:{background:'#f0f4ff',borderRadius:10,padding:'12px 14px',margin:'12px 0'}},
         h('p',{style:{fontWeight:500,fontSize:13,color:'#185FA5',margin:'0 0 8px'}},'📊 Purchase Summary'),
         h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}},
-          h('div',{style:{background:'#fff',borderRadius:8,padding:'8px',textAlign:'center'}},h('p',{style:{fontSize:10,color:'#888',margin:'0 0 3px'}},'Base (excl GST)'),h('p',{style:{fontSize:14,fontWeight:600,color:'#333',margin:0}},'₹'+fmt(purBase))),
+          h('div',{style:{background:'#fff',borderRadius:8,padding:'8px',textAlign:'center'}},h('p',{style:{fontSize:10,color:'#888',margin:'0 0 3px'}},'Base'),h('p',{style:{fontSize:14,fontWeight:600,color:'#333',margin:0}},'₹'+fmt(purBase))),
           h('div',{style:{background:'#EEEDFE',borderRadius:8,padding:'8px',textAlign:'center'}},h('p',{style:{fontSize:10,color:'#3C3489',margin:'0 0 3px'}},'CGST'),h('p',{style:{fontSize:14,fontWeight:600,color:'#3C3489',margin:0}},'₹'+fmt(purCGST))),
           h('div',{style:{background:'#EEEDFE',borderRadius:8,padding:'8px',textAlign:'center'}},h('p',{style:{fontSize:10,color:'#3C3489',margin:'0 0 3px'}},'SGST'),h('p',{style:{fontSize:14,fontWeight:600,color:'#3C3489',margin:0}},'₹'+fmt(purSGST))),
-          h('div',{style:{background:'#185FA5',borderRadius:8,padding:'8px',textAlign:'center'}},h('p',{style:{fontSize:10,color:'rgba(255,255,255,0.8)',margin:'0 0 3px'}},'Total (incl GST)'),h('p',{style:{fontSize:14,fontWeight:600,color:'#fff',margin:0}},'₹'+fmt(purTotal)))
+          h('div',{style:{background:'#185FA5',borderRadius:8,padding:'8px',textAlign:'center'}},h('p',{style:{fontSize:10,color:'rgba(255,255,255,0.8)',margin:'0 0 3px'}},'Total'),h('p',{style:{fontSize:14,fontWeight:600,color:'#fff',margin:0}},'₹'+fmt(purTotal)))
         )
       ),
       h('div',{style:{marginBottom:14}},
         h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:6}},'Payment Mode'),
         h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
           [['cash','💵 Cash'],['online','📱 Online/UPI'],['cheque','🏦 Cheque'],['due','⏳ Due/Credit']].map(function(opt){
-            return h('button',{key:opt[0],type:'button',
-              onClick:function(){setPf(function(p){return Object.assign({},p,{paymentMode:opt[0]});});},
-              style:{padding:'8px 14px',border:'2px solid '+(pf.paymentMode===opt[0]?'#185FA5':'#ddd'),
-                borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:pf.paymentMode===opt[0]?600:400,
-                background:pf.paymentMode===opt[0]?'#E6F1FB':'#fff',
-                color:pf.paymentMode===opt[0]?'#185FA5':'#555'}},opt[1]);
+            return h('button',{key:opt[0],type:'button',onClick:function(){setPf(function(p){return Object.assign({},p,{paymentMode:opt[0]});});},
+              style:{padding:'8px 14px',border:'2px solid '+(pf.paymentMode===opt[0]?'#185FA5':'#ddd'),borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:pf.paymentMode===opt[0]?600:400,background:pf.paymentMode===opt[0]?'#E6F1FB':'#fff',color:pf.paymentMode===opt[0]?'#185FA5':'#555'}},opt[1]);
           })
         )
       ),
@@ -957,47 +1058,24 @@ function Distributors(props){
       h(Inp,{label:'Notes (optional)',value:pf.notes,onChange:function(ev){setPf(function(p){return Object.assign({},p,{notes:ev.target.value});});}}),
       h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end'}},h(Btn,{variant:'secondary',onClick:function(){setShowP(null);}},'Cancel'),h(Btn,{onClick:savePurch},'Save Purchase'))
     ),
-    showQA&&h(Modal,{title:'Quick Add Product to Stock',onClose:function(){setShowQA(false);}},
-      h('p',{style:{fontSize:13,color:'#888',marginBottom:14}},'Add a new product to your stock. You can edit full details later in the Stock tab.'),
-      h(Inp,{label:'Product name *',value:qaForm.name,onChange:function(ev){qaSet({name:ev.target.value});},placeholder:'e.g. Coragen, Urea, Wheat Seeds'}),
-      h(Sel,{label:'Category',value:qaForm.category,onChange:function(ev){var gi=getGST(ev.target.value);qaSet({category:ev.target.value,gstRate:gi.gst,subType:''});}},
-        CATS.map(function(c2){return h('option',{key:c2},c2);})
-      ),
-      qaForm.category==='Fertilizer'&&h(Sel,{label:'Fertilizer type',value:qaForm.subType,onChange:function(ev){qaSet({subType:ev.target.value});}},h('option',{value:''},'Select'),...FERT_TYPES.map(function(t){return h('option',{key:t},t);})),
-      qaForm.category==='Zinc'&&h(Sel,{label:'Zinc type',value:qaForm.subType,onChange:function(ev){qaSet({subType:ev.target.value});}},h('option',{value:''},'Select'),...ZINC_TYPES.map(function(t){return h('option',{key:t},t);})),
-      qaForm.category==='Micronutrient'&&h(Sel,{label:'Micronutrient type',value:qaForm.subType,onChange:function(ev){qaSet({subType:ev.target.value});}},h('option',{value:''},'Select'),...MICRO_TYPES.map(function(t){return h('option',{key:t},t);})),
-      h(Sel,{label:'Stock unit',value:qaForm.unit,onChange:function(ev){qaSet({unit:ev.target.value});}},['kg','litre','g','ml','piece','bag','box','bottle'].map(function(u){return h('option',{key:u},u);})),
+    showQA&&h(Modal,{title:'Quick Add New Product',onClose:function(){setShowQA(false);}},
+      h('p',{style:{fontSize:13,color:'#888',marginBottom:14}},'Add a new product quickly. Edit full details later in Stock tab.'),
+      h(Inp,{label:'Product name *',value:qaForm.name,onChange:function(ev){qaSet({name:ev.target.value});},placeholder:'e.g. Coragen'}),
+      h(Sel,{label:'Category',value:qaForm.category,onChange:function(ev){var gi=getGST(ev.target.value);qaSet({category:ev.target.value,gstRate:gi.gst});}},CATS.map(function(c2){return h('option',{key:c2},c2);})),
+      h(Sel,{label:'Unit',value:qaForm.unit,onChange:function(ev){qaSet({unit:ev.target.value});}},['kg','litre','g','ml','piece','bag'].map(function(u){return h('option',{key:u},u);})),
+      h('div',{style:{marginBottom:14}},h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:6}},'GST Rate %'),h(GSTBtns,{value:qaForm.gstRate,onChange:function(r){qaSet({gstRate:r});}})),
       h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}},
-        h('div',null,
-          h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:4}},'Size per piece (optional)'),
-          h('div',{style:{display:'flex',gap:6}},
-            h('input',{type:'number',placeholder:'e.g. 250',value:qaForm.pieceSize,onChange:function(ev){qaSet({pieceSize:ev.target.value});},style:Object.assign({},IS,{flex:2})}),
-            h('select',{value:qaForm.pieceSizeUnit,onChange:function(ev){qaSet({pieceSizeUnit:ev.target.value});},style:Object.assign({},IS,{flex:1})},['g','ml','kg','litre'].map(function(u){return h('option',{key:u},u);}))
-          )
-        ),
-        h(Inp,{label:'No. of pieces (optional)',type:'number',value:qaForm.pieces,onChange:function(ev){qaSet({pieces:ev.target.value});},placeholder:'e.g. 10'})
+        h(Inp,{label:'Buy price ₹/pc',type:'number',value:qaForm.buyPrice,onChange:function(ev){qaSet({buyPrice:ev.target.value});},placeholder:'0'}),
+        h(Inp,{label:'Sell price ₹/pc *',type:'number',value:qaForm.sellPrice,onChange:function(ev){qaSet({sellPrice:ev.target.value});},placeholder:'0'})
       ),
-      h('div',{style:{marginBottom:14}},
-        h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:6}},'GST Rate %'),
-        h(GSTBtns,{value:qaForm.gstRate,onChange:function(r){qaSet({gstRate:r});}})
-      ),
-      h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}},
-        h(Inp,{label:'Buying price ₹ (per piece)',type:'number',value:qaForm.buyPrice,onChange:function(ev){qaSet({buyPrice:ev.target.value});},placeholder:'0'}),
-        h(Inp,{label:'Selling price ₹ (per piece) *',type:'number',value:qaForm.sellPrice,onChange:function(ev){qaSet({sellPrice:ev.target.value});},placeholder:'0'})
-      ),
-      h('div',{style:{background:'#EAF3DE',borderRadius:8,padding:'10px 12px',marginBottom:14,fontSize:13,color:'#3B6D11'}},'✓ After adding, select this product from the dropdown to record the purchase.'),
-      h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end'}},
-        h(Btn,{variant:'secondary',onClick:function(){setShowQA(false);}},'Cancel'),
-        h(Btn,{onClick:saveQuickAdd},'Add Product & Continue')
-      )
+      h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end'}},h(Btn,{variant:'secondary',onClick:function(){setShowQA(false);}},'Cancel'),h(Btn,{onClick:saveQuickAdd},'Add Product'))
     ),
     stockQ&&h(Modal,{title:'Add to Stock?',onClose:function(){finishPurch(false);}},
       h('div',{style:{textAlign:'center',padding:'10px 0'}},
         h('div',{style:{fontSize:48,marginBottom:12}},'📦'),
-        h('p',{style:{fontSize:16,fontWeight:500,color:'#222',margin:'0 0 8px'}},'Do you want to add these products to stock?'),
-        h('p',{style:{fontSize:13,color:'#888',margin:'0 0 20px',lineHeight:1.6}},'Click YES if you received the goods now.\nClick NO if this is a past bill — stock already managed.'),
-        h('div',{style:{background:'#f5f8ff',borderRadius:10,padding:'12px 14px',marginBottom:20,textAlign:'left'}},
-          h('p',{style:{fontWeight:500,fontSize:13,color:'#185FA5',margin:'0 0 8px'}},'Products in this purchase:'),
+        h('p',{style:{fontSize:16,fontWeight:500,color:'#222',margin:'0 0 8px'}},'Add these products to stock?'),
+        h('p',{style:{fontSize:13,color:'#888',margin:'0 0 20px'}},'YES = received now, update stock. NO = past bill, record only.'),
+        h('div',{style:{background:'#f5f8ff',borderRadius:10,padding:'12px',marginBottom:20,textAlign:'left'}},
           stockQ.viC.map(function(it,i){
             var prod=data.products.find(function(p){return p.id===it.productId;})||null;
             return h('div',{key:i,style:{display:'flex',justifyContent:'space-between',fontSize:13,padding:'4px 0',borderBottom:'0.5px solid #eee'}},
@@ -1011,13 +1089,14 @@ function Distributors(props){
             h('div',null,h('div',{style:{fontSize:24,marginBottom:4}},'✗'),h('div',null,'NO — Past bill'),h('div',{style:{fontSize:11,color:'#888',marginTop:2}},'Save record only'))
           ),
           h('button',{onClick:function(){finishPurch(true);},style:{flex:1,padding:'14px',background:'#185FA5',color:'#fff',border:'none',borderRadius:10,fontSize:14,fontWeight:600,cursor:'pointer'}},
-            h('div',null,h('div',{style:{fontSize:24,marginBottom:4}},'✓'),h('div',null,'YES — Add to stock'),h('div',{style:{fontSize:11,color:'rgba(255,255,255,0.8)',marginTop:2}},'Update stock quantities'))
+            h('div',null,h('div',{style:{fontSize:24,marginBottom:4}},'✓'),h('div',null,'YES — Add to stock'),h('div',{style:{fontSize:11,color:'rgba(255,255,255,0.8)',marginTop:2}},'Update quantities'))
           )
         )
       )
     )
   );
 }
+
 
 // ── FARMERS ─────────────────────────────────────────────────────────────────
 function Farmers(props){
@@ -1617,7 +1696,7 @@ function IPMSPanel(props){
   return h('div',null,
     // Tab bar
     h('div',{style:{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap'}},
-      [['portals','🏛️ Govt Portals'],['upload','📷 Upload Bill (AI)'],['sheet','📊 Download Sheet']].map(function(t){
+      [['portals','🏛️ Govt Portals'],['upload','📋 Bill Entry'],['sheet','📊 Download Sheet']].map(function(t){
         return h('button',{key:t[0],onClick:function(){setActiveTab(t[0]);},
           style:{padding:'8px 18px',border:'none',borderRadius:8,cursor:'pointer',fontWeight:500,fontSize:14,
             background:activeTab===t[0]?'#185FA5':'#eee',color:activeTab===t[0]?'#fff':'#333'}},t[1]);
@@ -1686,65 +1765,125 @@ function IPMSPanel(props){
 
     // ── UPLOAD BILL TAB ──
     activeTab==='upload'&&h('div',null,
-      h(Card,{style:{marginBottom:16}},
-        h('p',{style:{fontWeight:600,fontSize:15,margin:'0 0 4px'}},'📷 Upload Distributor Bill — AI Auto-Read'),
-        h('p',{style:{fontSize:13,color:'#888',marginBottom:14}},'Take a clear photo of the distributor bill. AI will automatically read all products, quantities, rates and GST. You can correct any mistakes before saving to stock.'),
-        h('div',{style:{border:'2px dashed #185FA5',borderRadius:12,padding:'30px 20px',textAlign:'center',marginBottom:14,background:'#f5f8ff',cursor:'pointer'},
-          onClick:function(){document.getElementById('billUploadInput').click();}},
-          h('div',{style:{fontSize:48,marginBottom:8}},'📄'),
-          h('p',{style:{fontSize:15,fontWeight:500,color:'#185FA5',margin:'0 0 6px'}},'Click to upload bill photo'),
-          h('p',{style:{fontSize:12,color:'#aaa',margin:0}},'Supports JPG, PNG, PDF'),
-          h('input',{type:'file',accept:'image/*,.pdf',onChange:handleBillUpload,id:'billUploadInput',style:{display:'none'}})
+      h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}},
+        h('div',{style:{background:'#E8F0FE',border:'2px solid #4285F4',borderRadius:12,padding:'14px',cursor:'pointer'},
+          onClick:function(){window.open('https://lens.google.com','_blank');}},
+          h('div',{style:{fontSize:28,marginBottom:6}},'🔍'),
+          h('p',{style:{fontWeight:700,fontSize:14,color:'#4285F4',margin:'0 0 4px'}},'Open Google Lens'),
+          h('p',{style:{fontSize:12,color:'#555',margin:'0 0 8px'}},'Take photo of bill → Lens reads all text automatically'),
+          h('div',{style:{background:'#4285F4',color:'#fff',borderRadius:6,padding:'6px 12px',fontSize:12,fontWeight:600,textAlign:'center',display:'inline-block'}},'Open Google Lens ↗')
         ),
-        processing&&h('div',{style:{textAlign:'center',padding:'24px',background:'#f5f8ff',borderRadius:10}},
-          h('div',{style:{fontSize:32,marginBottom:8}},'🤖'),
-          h('p',{style:{fontSize:15,fontWeight:500,color:'#185FA5',margin:'0 0 4px'}},'AI is reading your bill...'),
-          h('p',{style:{fontSize:12,color:'#888',margin:0}},'Takes 5-15 seconds. Please wait.')
+        h('div',{style:{background:'#E6F4EA',border:'2px solid #34A853',borderRadius:12,padding:'14px',cursor:'pointer'},
+          onClick:function(){window.open('https://translate.google.com/?sl=hi&tl=en&op=translate','_blank');}},
+          h('div',{style:{fontSize:28,marginBottom:6}},'🌐'),
+          h('p',{style:{fontWeight:700,fontSize:14,color:'#34A853',margin:'0 0 4px'}},'Google Translate'),
+          h('p',{style:{fontSize:12,color:'#555',margin:'0 0 8px'}},'Hindi bill? Translate to English then enter below'),
+          h('div',{style:{background:'#34A853',color:'#fff',borderRadius:6,padding:'6px 12px',fontSize:12,fontWeight:600,textAlign:'center',display:'inline-block'}},'Open Translator ↗')
+        )
+      ),
+      h(Card,{style:{marginBottom:16}},
+        h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}},
+          h('p',{style:{fontWeight:600,fontSize:14,margin:0}},'📋 Enter Bill Items'),
+          h('button',{onClick:function(){
+            var newRow={name:'',pieces:'',pieceSize:'',pieceSizeUnit:'g',qty:'',unit:'kg',ratePerUnit:'',total:'',gst:9,productId:'',matched:false,confirmed:false};
+            setParsedItems(function(prev){return [...(prev||[]),newRow];});
+          },style:{background:'#185FA5',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',cursor:'pointer',fontSize:12,fontWeight:600}},'+ Add Row')
+        ),
+        !parsedItems&&h('div',{style:{textAlign:'center',padding:'20px',background:'#f5f8ff',borderRadius:8}},
+          h('p',{style:{fontSize:13,color:'#555',margin:'0 0 10px'}},'1. Use Google Lens to read your bill'),
+          h('p',{style:{fontSize:13,color:'#555',margin:'0 0 10px'}},'2. Click "+ Add Row" to enter each product'),
+          h('p',{style:{fontSize:13,color:'#555',margin:0}},'3. Confirm each item → Add to Stock')
         )
       ),
       parsedItems&&h(Card,null,
-        h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}},
+        h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}},
           h('div',null,
-            h('p',{style:{fontWeight:600,fontSize:15,margin:'0 0 2px'}},'✏️ Review & Correct Bill Items'),
-            h('p',{style:{fontSize:12,color:'#888',margin:0}},parsedItems.length+' items found. Check each one, correct if needed, then confirm.')
+            h('p',{style:{fontWeight:600,fontSize:15,margin:'0 0 2px'}},'📋 Bill Entry Table'),
+            h('p',{style:{fontSize:12,color:'#888',margin:0}},'Fill all items. Auto-calculates total. Match each with stock product then confirm.')
           ),
-          h('div',{style:{background:'#EAF3DE',borderRadius:8,padding:'6px 12px',fontSize:13,color:'#3B6D11',fontWeight:500}},parsedItems.filter(function(it){return it.confirmed;}).length+'/'+parsedItems.length+' confirmed')
+          h('div',{style:{display:'flex',gap:8,alignItems:'center'}},
+            h('span',{style:{background:'#EAF3DE',borderRadius:8,padding:'4px 10px',fontSize:12,color:'#3B6D11',fontWeight:500}},parsedItems.filter(function(it){return it.confirmed;}).length+' confirmed'),
+            h('button',{onClick:function(){setParsedItems(function(prev){return [...prev,{name:'',pieces:'',pieceSize:'',pieceSizeUnit:'g',qty:'',unit:'kg',ratePerUnit:'',total:'',gst:9,productId:'',matched:false,confirmed:false}];});},style:{background:'#E6F1FB',color:'#185FA5',border:'none',borderRadius:6,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:600}},'+ Add Row')
+          )
         ),
-        parsedItems.map(function(item,i){
-          var gr=Number(item.gst)||9;
-          var tot=Number(item.total)||0;
-          var base=gr>0?tot*100/(100+gr):tot;
-          var cgst=base*gr/2/100;
-          return h('div',{key:i,style:{background:item.confirmed?'#f0fff4':'#fafafa',border:'1.5px solid '+(item.confirmed?'#3B6D11':'#ddd'),borderRadius:10,padding:'12px',marginBottom:10}},
-            h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}},
-              h('span',{style:{fontWeight:600,fontSize:13,color:item.confirmed?'#3B6D11':'#555'}},'Item '+(i+1)+(item.matched?' (auto-matched ✓)':' (manual match needed)')),
-              h('button',{onClick:function(){updateItem(i,{confirmed:!item.confirmed});},
-                style:{background:item.confirmed?'#3B6D11':'#185FA5',color:'#fff',border:'none',borderRadius:6,padding:'5px 14px',cursor:'pointer',fontSize:12,fontWeight:600}},
-                item.confirmed?'✓ Confirmed':'Confirm')
-            ),
-            h('div',{style:{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr',gap:8,marginBottom:8}},
-              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Product Name'),h('input',{value:item.name||'',onChange:function(ev){updateItem(i,{name:ev.target.value});},style:Object.assign({},IS,{fontSize:12})})),
-              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Qty'),h('input',{type:'number',value:item.qty||'',onChange:function(ev){updateItem(i,{qty:ev.target.value});},style:Object.assign({},IS,{fontSize:12})})),
-              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Unit'),h('select',{value:item.unit||'kg',onChange:function(ev){updateItem(i,{unit:ev.target.value});},style:Object.assign({},IS,{fontSize:12})},['kg','litre','g','ml','piece','bag'].map(function(u){return h('option',{key:u},u);}))),
-              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Rate/unit Rs'),h('input',{type:'number',value:item.ratePerUnit||'',onChange:function(ev){updateItem(i,{ratePerUnit:ev.target.value});},style:Object.assign({},IS,{fontSize:12})})),
-              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Total Rs'),h('input',{type:'number',value:item.total||'',onChange:function(ev){updateItem(i,{total:ev.target.value});},style:Object.assign({},IS,{fontSize:12})}))
-            ),
-            h('div',{style:{display:'grid',gridTemplateColumns:'2fr 1fr',gap:8}},
-              h('div',null,
-                h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},item.matched?'Matched product (auto) — change if wrong':'Select product from stock *'),
-                h('select',{value:item.productId||'',onChange:function(ev){updateItem(i,{productId:ev.target.value});},style:Object.assign({},IS,{fontSize:12,borderColor:item.productId?'#b7ebc8':'#ffb3b3'})},
-                  h('option',{value:''},'-- Select product --'),
-                  data.products.map(function(p){return h('option',{key:p.id,value:p.id},p.name+(p.subType?' ('+p.subType+')':'')+' ['+p.category+'] stock:'+fmt(p.stock)+p.unit);})
-                )
-              ),
-              h('div',{style:{background:'#EEEDFE',borderRadius:8,padding:'8px 10px'}},
-                h('p',{style:{fontSize:10,color:'#3C3489',margin:'0 0 2px',fontWeight:500}},'GST '+gr+'% Breakdown'),
-                h('p',{style:{fontSize:11,color:'#3C3489',margin:'0 0 2px'}},'Base: Rs.'+fmt(base)),
-                h('p',{style:{fontSize:11,color:'#3C3489',margin:0}},'CGST+SGST: Rs.'+fmt(cgst)+'+Rs.'+fmt(cgst))
-              )
+        h('div',{style:{overflowX:'auto',marginBottom:8}},
+          h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:900}},
+            h('thead',null,h('tr',{style:{background:'#185FA5'}},
+              ['#','Product Name','Pcs','Size','Unit','Qty (auto)','Rate/unit Rs','Total (auto)','GST%','Match with Stock','✓',''].map(function(hd){
+                return h('th',{key:hd,style:{padding:'7px 5px',color:'#fff',fontWeight:500,textAlign:'left',whiteSpace:'nowrap',fontSize:11}},hd);
+              })
+            )),
+            h('tbody',null,
+              parsedItems.map(function(item,i){
+                var gr=Number(item.gst)||9;
+                var pc=Number(item.pieces)||0;
+                var ps=Number(item.pieceSize)||0;
+                var psu=item.pieceSizeUnit||'g';
+                var sib2=psu==='g'?ps/1000:psu==='ml'?ps/1000:ps;
+                var autoQty=pc>0&&ps>0?Math.round(pc*sib2*1000)/1000:Number(item.qty)||0;
+                var rate=Number(item.ratePerUnit)||0;
+                var autoTotal=autoQty>0&&rate>0?autoQty*rate:Number(item.total)||0;
+                var base=gr>0?autoTotal*100/(100+gr):autoTotal;
+                var cgst=base*gr/2/100;
+                var IS2={width:'100%',boxSizing:'border-box',padding:'4px 5px',border:'0.5px solid #ddd',borderRadius:4,fontSize:12,outline:'none',background:item.confirmed?'#f0fff4':'#fff'};
+                return h('tr',{key:i,style:{borderBottom:'0.5px solid #eee',background:item.confirmed?'#f0fff4':'i%2===0?#fff:#fafafa'}},
+                  h('td',{style:{padding:'4px 5px',color:'#888',fontSize:11,textAlign:'center'}},i+1),
+                  h('td',{style:{padding:'3px 4px',minWidth:120}},h('input',{value:item.name||'',onChange:function(ev){updateItem(i,{name:ev.target.value});},placeholder:'e.g. Tapuz',style:IS2})),
+                  h('td',{style:{padding:'3px 4px',width:55}},h('input',{type:'number',value:item.pieces||'',onChange:function(ev){updateItem(i,{pieces:ev.target.value});},placeholder:'e.g. 10',style:IS2})),
+                  h('td',{style:{padding:'3px 4px',width:90}},
+                    h('div',{style:{display:'flex',gap:2}},
+                      h('input',{type:'number',value:item.pieceSize||'',onChange:function(ev){updateItem(i,{pieceSize:ev.target.value});},placeholder:'250',style:Object.assign({},IS2,{flex:2})}),
+                      h('select',{value:item.pieceSizeUnit||'g',onChange:function(ev){updateItem(i,{pieceSizeUnit:ev.target.value});},style:Object.assign({},IS2,{flex:1,padding:'4px 2px'})},
+                        ['g','ml','kg','litre'].map(function(u){return h('option',{key:u},u);})
+                      )
+                    )
+                  ),
+                  h('td',{style:{padding:'3px 4px',width:60}},
+                    h('select',{value:item.unit||'kg',onChange:function(ev){updateItem(i,{unit:ev.target.value});},style:IS2},
+                      ['kg','litre','g','ml','piece'].map(function(u){return h('option',{key:u},u);})
+                    )
+                  ),
+                  h('td',{style:{padding:'4px 5px',background:'#f0f4ff',textAlign:'center',fontWeight:600,color:'#185FA5',whiteSpace:'nowrap'}},
+                    autoQty>0?fmt(autoQty)+' '+(item.unit||'kg'):h('span',{style:{color:'#bbb'}},'auto')
+                  ),
+                  h('td',{style:{padding:'3px 4px',width:80}},h('input',{type:'number',value:item.ratePerUnit||'',onChange:function(ev){updateItem(i,{ratePerUnit:ev.target.value});},placeholder:'870',style:IS2})),
+                  h('td',{style:{padding:'4px 5px',background:'#EAF3DE',textAlign:'center',fontWeight:700,color:'#3B6D11',whiteSpace:'nowrap'}},
+                    h('div',null,
+                      autoTotal>0?h('p',{style:{margin:'0 0 1px'}},'Rs.'+fmt(autoTotal)):h('span',{style:{color:'#bbb'}},'auto'),
+                      autoTotal>0&&gr>0&&h('p',{style:{margin:0,fontSize:9,color:'#888'}},'C+S:'+fmt(cgst)+'+'+fmt(cgst))
+                    )
+                  ),
+                  h('td',{style:{padding:'3px 4px',width:55}},
+                    h('select',{value:String(item.gst||9),onChange:function(ev){updateItem(i,{gst:Number(ev.target.value)});},style:IS2},
+                      [0,5,9,12,18].map(function(r){return h('option',{key:r,value:r},r+'%');})
+                    )
+                  ),
+                  h('td',{style:{padding:'3px 4px',minWidth:140}},
+                    h('select',{value:item.productId||'',onChange:function(ev){updateItem(i,{productId:ev.target.value});},
+                      style:Object.assign({},IS2,{borderColor:item.productId?'#b7ebc8':'#ffcccc'})},
+                      h('option',{value:''},'-- select --'),
+                      data.products.map(function(p){return h('option',{key:p.id,value:p.id},p.name+(p.subType?' ('+p.subType+')':''));})
+                    )
+                  ),
+                  h('td',{style:{padding:'3px 4px',textAlign:'center'}},
+                    h('button',{onClick:function(){updateItem(i,{confirmed:!item.confirmed});},
+                      style:{background:item.confirmed?'#3B6D11':'#ddd',color:item.confirmed?'#fff':'#555',border:'none',borderRadius:4,padding:'4px 8px',cursor:'pointer',fontSize:12,fontWeight:600}},
+                      item.confirmed?'✓':'○')
+                  ),
+                  h('td',{style:{padding:'3px 4px',textAlign:'center'}},
+                    h('button',{onClick:function(){updateItem(i,{confirmed:false});setParsedItems(function(prev){return prev.filter(function(_,idx){return idx!==i;});});},
+                      style:{background:'#FCEBEB',color:'#A32D2D',border:'none',borderRadius:4,padding:'4px 6px',cursor:'pointer',fontSize:11}},'✕')
+                  )
+                );
+              })
             )
-          );
-        }),
+          )
+        ),
+        h('div',{style:{background:'#f5f8ff',borderRadius:8,padding:'8px 12px',marginBottom:8,fontSize:12,color:'#555',display:'flex',gap:16,flexWrap:'wrap'}},
+          h('span',null,'Total items: '+parsedItems.length),
+          h('span',{style:{color:'#3B6D11',fontWeight:500}},'Confirmed: '+parsedItems.filter(function(it){return it.confirmed;}).length),
+          h('span',{style:{color:'#185FA5',fontWeight:500}},'Grand Total: Rs.'+fmt(parsedItems.reduce(function(s,it){var pc=Number(it.pieces)||0;var ps=Number(it.pieceSize)||0;var psu=it.pieceSizeUnit||'g';var sib3=psu==='g'?ps/1000:psu==='ml'?ps/1000:ps;var qty=pc>0&&ps>0?pc*sib3:(Number(it.qty)||0);return s+qty*(Number(it.ratePerUnit)||0);},0)))
+        ),
         h('div',{style:{display:'flex',gap:10,justifyContent:'space-between',alignItems:'center',marginTop:14,paddingTop:12,borderTop:'1px solid #eee'}},
           h('div',{style:{display:'flex',gap:8,alignItems:'center'}},
             h('p',{style:{fontSize:13,color:'#888',margin:0}},'Only confirmed items with a selected product will be added to stock'),
@@ -1838,7 +1977,7 @@ var ALL_TABS=[
   {id:'farmers',label:'Farmers',roles:['admin','worker']},
   {id:'sales',label:'Sales & Bills',roles:['admin','worker']},
   {id:'reports',label:'Reports',roles:['admin']},
-  {id:'ipms',label:'🏛️ IPMS',roles:['admin']},
+  {id:'ipms',label:'🏛️ Govt Portals',roles:['admin']},
   {id:'users',label:'Users',roles:['admin']},
   {id:'settings',label:'Settings',roles:['admin','worker']},
 ];

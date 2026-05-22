@@ -1449,6 +1449,353 @@ function Settings(props){
   );
 }
 
+
+// ── GOVT PORTALS PANEL ─────────────────────────────────────────────────────
+function IPMSPanel(props){
+  var data=props.data;var setData=props.setData;
+  var s0=useState('portals');var activeTab=s0[0];var setActiveTab=s0[1];
+  var s1=useState(false);var processing=s1[0];var setProcessing=s1[1];
+  var s2=useState(null);var parsedItems=s2[0];var setParsedItems=s2[1];
+  var s3=useState('');var filterDist=s3[0];var setFilterDist=s3[1];
+  var s4=useState('');var filterFrom=s4[0];var setFilterFrom=s4[1];
+  var s5=useState('');var filterTo=s5[0];var setFilterTo=s5[1];
+  var s6=useState('all');var filterCat=s6[0];var setFilterCat=s6[1];
+
+  var portals=[
+    {id:'ipms',name:'IPMS Portal',full:'Integrated Pesticide Management System',url:'https://ipms.gov.in/login',color:'#c0392b',bg:'#FCEBEB',cats:['Pesticide','Insecticide','Herbicide','Fungicide','Bio-Pesticide'],icon:'🧪',status:'MANDATORY',statusColor:'#A32D2D',statusBg:'#FCEBEB',desc:'Record every purchase from distributor and every sale to farmer. Licence will be cancelled without registration.'},
+    {id:'sathi',name:'SATHI Portal',full:'Seed Traceability, Authentication & Holistic Inventory',url:'https://seedtrace.gov.in',color:'#3B6D11',bg:'#EAF3DE',cats:['Seeds'],icon:'🌱',status:'OPTIONAL (becoming mandatory)',statusColor:'#854F0B',statusBg:'#FAEEDA',desc:'Track seeds from producer to farmer. QR code on each packet. National coverage expected by Kharif 2026.'},
+    {id:'fertilizer',name:'iFMS Portal',full:'Integrated Fertilizer Management System',url:'https://ifms.dac.gov.in',color:'#185FA5',bg:'#E6F1FB',cats:['Fertilizer','Zinc','Micronutrient'],icon:'🌿',status:'MANDATORY',statusColor:'#185FA5',statusBg:'#E6F1FB',desc:'Track fertilizer sales. Aadhaar-based POS system. Every fertilizer sale to farmer must be recorded.'}
+  ];
+
+  function getCatPortal(cat){
+    for(var i=0;i<portals.length;i++){if(portals[i].cats.indexOf(cat)>=0)return portals[i];}
+    return null;
+  }
+
+  // Download CSV
+  function downloadCSV(){
+    var rows=[['Date','Distributor','Product','Category','Pieces','Size/pc','Total Qty','Unit','Rate/unit (incl GST)','Total (incl GST)','Base Amount','CGST','SGST','GST%','Payment Mode','Stock Added']];
+    var filtered=data.purchases.filter(function(p){
+      if(filterDist&&p.distributorId!==filterDist)return false;
+      if(filterFrom&&p.date<filterFrom)return false;
+      if(filterTo&&p.date>filterTo)return false;
+      return true;
+    });
+    filtered.forEach(function(purch){
+      var dist=data.distributors.find(function(d){return d.id===purch.distributorId;})||{name:'Unknown'};
+      (purch.items||[]).forEach(function(it){
+        var prod=data.products.find(function(p){return p.id===it.productId;})||{name:'Unknown',category:'',unit:'kg'};
+        if(filterCat!=='all'&&prod.category!==filterCat)return;
+        rows.push([
+          purch.date, dist.name, prod.name, prod.category||'',
+          it.pieces||'', (it.pieceSize?it.pieceSize+(it.pieceSizeUnit||'g'):''),
+          it.qty||0, prod.unit||'kg',
+          it.ratePerUnit||0, it.totalWithGst||0,
+          it.totalBase||0, it.cgstPaid||0, it.sgstPaid||0,
+          (it.gstRate||0)+'%', purch.paymentMode||'cash',
+          purch.stockAdded?'Yes':'No'
+        ]);
+      });
+    });
+    var nl=String.fromCharCode(10);
+    var csv=rows.map(function(r){return r.map(function(cell){var s=String(cell);s=s.replace(/"/g,'""');return '"'+s+'"';}).join(',');}).join(nl);
+    var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='purchases_'+toDay()+'.csv';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+  }
+
+  // Upload bill and parse with AI
+  function handleBillUpload(ev){
+    var file=ev.target.files[0];if(!file)return;
+    setProcessing(true);setParsedItems(null);
+    var reader=new FileReader();
+    reader.onload=function(e){
+      var base64=e.target.result.split(',')[1];
+      var mediaType=file.type||'image/jpeg';
+      fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          model:'claude-sonnet-4-20250514',max_tokens:1000,
+          messages:[{role:'user',content:[
+            {type:'image',source:{type:'base64',media_type:mediaType,data:base64}},
+            {type:'text',text:'This is an Indian agricultural shop distributor bill/invoice. Extract ALL product line items. Return ONLY a valid JSON array with no extra text. Each item: {"name":"product name","pieces":number or null,"pieceSize":number or null,"pieceSizeUnit":"g or ml or kg or litre","qty":total quantity as number,"unit":"kg or litre or g or ml","ratePerUnit":price per unit as number,"total":total price as number,"gst":gst percentage as number 0 or 5 or 9 or 12 or 18}'}
+          ]}]
+        })
+      })
+      .then(function(r){return r.json();})
+      .then(function(result){
+        setProcessing(false);
+        var text='';
+        if(result.content&&result.content[0])text=result.content[0].text||'';
+        try{
+          var clean=text.replace(/```json/g,'').replace(/```/g,'').trim();
+          var items=JSON.parse(clean);
+          var matched=items.map(function(item){
+            var prod=data.products.find(function(p){
+              return p.name.toLowerCase().indexOf(item.name.toLowerCase())>=0||
+                     item.name.toLowerCase().indexOf(p.name.toLowerCase())>=0;
+            });
+            return Object.assign({},item,{productId:prod?prod.id:'',matched:!!prod,confirmed:false});
+          });
+          setParsedItems(matched);
+        }catch(err){
+          alert('Could not read bill automatically. Please check image is clear and try again.');
+        }
+      })
+      .catch(function(){setProcessing(false);alert('Error reading bill. Please try again.');});
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function updateItem(i,v){setParsedItems(function(prev){return prev.map(function(it,idx){return idx===i?Object.assign({},it,v):it;});});}
+
+  function addConfirmedToStock(){
+    var toAdd=parsedItems.filter(function(it){return it.confirmed&&it.productId;});
+    if(!toAdd.length)return alert('Please confirm at least one item and match it with a product');
+    var products=data.products.map(function(p){
+      var it=toAdd.find(function(x){return x.productId===p.id;});
+      if(!it)return p;
+      return Object.assign({},p,{stock:Math.round((Number(p.stock)||0)*1000+(Number(it.qty)||0)*1000)/1000});
+    });
+    var nd=Object.assign({},data,{products:products});setData(nd);saveData(nd);
+    alert(toAdd.length+' products updated in stock successfully!');
+    setParsedItems(null);
+  }
+
+  // Pending IPMS/SATHI/iFMS entries
+  function getPendingSales(cats){
+    return data.sales.filter(function(s){
+      return s.items.some(function(it){
+        var p=data.products.find(function(pr){return pr.id===it.productId;});
+        return p&&cats.indexOf(p.category)>=0;
+      });
+    }).slice(-8).reverse();
+  }
+
+  var filtPurchases=data.purchases.filter(function(p){
+    if(filterDist&&p.distributorId!==filterDist)return false;
+    if(filterFrom&&p.date<filterFrom)return false;
+    if(filterTo&&p.date>filterTo)return false;
+    return true;
+  });
+  var totalSpent=filtPurchases.reduce(function(s,p){return s+(p.totalAmount||0);},0);
+  var totalGST=filtPurchases.reduce(function(s,p){return s+(p.totalGstPaid||0);},0);
+
+  return h('div',null,
+    // Tab bar
+    h('div',{style:{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap'}},
+      [['portals','🏛️ Govt Portals'],['upload','📷 Upload Bill (AI)'],['sheet','📊 Download Sheet']].map(function(t){
+        return h('button',{key:t[0],onClick:function(){setActiveTab(t[0]);},
+          style:{padding:'8px 18px',border:'none',borderRadius:8,cursor:'pointer',fontWeight:500,fontSize:14,
+            background:activeTab===t[0]?'#185FA5':'#eee',color:activeTab===t[0]?'#fff':'#333'}},t[1]);
+      })
+    ),
+
+    // ── PORTALS TAB ──
+    activeTab==='portals'&&h('div',null,
+      h('p',{style:{fontSize:13,color:'#888',marginBottom:16}},'Three government portals are required for your agricultural shop. No public API is available — you must manually enter data on each portal. Use the Copy buttons below to quickly copy sale details.'),
+      // Portal cards
+      portals.map(function(portal){
+        var pendingSales=getPendingSales(portal.cats);
+        return h('div',{key:portal.id,style:{background:'#fff',border:'2px solid '+portal.color,borderRadius:14,padding:'16px',marginBottom:16}},
+          h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:12}},
+            h('div',null,
+              h('div',{style:{display:'flex',alignItems:'center',gap:10,marginBottom:4}},
+                h('span',{style:{fontSize:28}},portal.icon),
+                h('div',null,
+                  h('p',{style:{fontWeight:700,fontSize:16,margin:'0 0 2px',color:portal.color}},portal.name),
+                  h('p',{style:{fontSize:11,color:'#888',margin:0}},portal.full)
+                )
+              ),
+              h('span',{style:{background:portal.statusBg,color:portal.statusColor,borderRadius:20,padding:'3px 10px',fontSize:11,fontWeight:600}},portal.status)
+            ),
+            h('button',{onClick:function(){window.open(portal.url,'_blank');},
+              style:{background:portal.color,color:'#fff',border:'none',borderRadius:8,padding:'10px 16px',cursor:'pointer',fontWeight:600,fontSize:13,whiteSpace:'nowrap'}
+            },'Open Portal ↗')
+          ),
+          h('p',{style:{fontSize:12,color:'#555',marginBottom:10,lineHeight:1.6}},portal.desc),
+          h('div',{style:{background:'#f5f5f5',borderRadius:8,padding:'6px 12px',marginBottom:10,fontSize:12,color:'#666'}},
+            h('span',{style:{fontWeight:500}},'Covers: '),portal.cats.join(', ')
+          ),
+          pendingSales.length>0&&h('div',null,
+            h('p',{style:{fontWeight:500,fontSize:13,margin:'0 0 6px',color:portal.color}},'Recent sales to enter on this portal:'),
+            h('div',{style:{overflowX:'auto'}},
+              h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12}},
+                h('thead',null,h('tr',{style:{background:'#f7f7f7'}},
+                  ['Date','Bill No','Farmer','Products','Total','Copy'].map(function(hd){return h('th',{key:hd,style:{padding:'6px 8px',textAlign:'left',fontWeight:500}},hd);})
+                )),
+                h('tbody',null,pendingSales.map(function(s){
+                  var farmer=data.farmers.find(function(f){return f.id===s.farmerId;})||null;
+                  var relItems=s.items.filter(function(it){var p=data.products.find(function(pr){return pr.id===it.productId;});return p&&portal.cats.indexOf(p.category)>=0;});
+                  var nl2=String.fromCharCode(10);
+                  var copyText=portal.name+' Entry:'+nl2+'Date: '+s.date+nl2+'Bill No: '+(s.billNo||s.id.slice(0,6))+nl2+'Farmer: '+(farmer?farmer.name:'Walk-in Customer')+(farmer&&farmer.phone?nl2+'Phone: '+farmer.phone:'')+(farmer&&farmer.village?nl2+'Village: '+farmer.village:'')+nl2+'Products:'+nl2+relItems.map(function(it){var p=data.products.find(function(pr){return pr.id===it.productId;})||{name:'?',unit:'kg'};return '  '+p.name+': '+it.qty+' '+(it.unit||p.unit)+' @ Rs.'+it.price+'/'+( it.unit||p.unit);}).join(nl2)+nl2+'Total: Rs.'+fmt(s.total)+(s.paymentMethod?nl2+'Payment: '+s.paymentMethod:'');
+                  return h('tr',{key:s.id,style:{borderBottom:'0.5px solid #eee'}},
+                    h('td',{style:{padding:'5px 8px'}},s.date),
+                    h('td',{style:{padding:'5px 8px',fontFamily:'monospace',fontSize:11}},s.billNo||s.id.slice(0,6)),
+                    h('td',{style:{padding:'5px 8px'}},farmer?farmer.name:'Walk-in'),
+                    h('td',{style:{padding:'5px 8px',fontSize:11}},relItems.map(function(it){var p=data.products.find(function(pr){return pr.id===it.productId;})||{name:'?'};return p.name;}).join(', ')),
+                    h('td',{style:{padding:'5px 8px',color:'#3B6D11',fontWeight:500}},'Rs.'+fmt(s.total)),
+                    h('td',{style:{padding:'5px 8px'}},
+                      h('button',{onClick:function(){
+                        if(navigator.clipboard){navigator.clipboard.writeText(copyText).then(function(){alert('Copied! Now paste on '+portal.name);});}
+                        else{var ta=document.createElement('textarea');ta.value=copyText;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);alert('Copied!');}
+                      },style:{background:portal.bg,color:portal.color,border:'none',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11,fontWeight:600}},'Copy')
+                    )
+                  );
+                }))
+              )
+            )
+          ),
+          pendingSales.length===0&&h('p',{style:{fontSize:12,color:'#aaa',fontStyle:'italic'}},'No recent '+portal.cats.join('/')+' sales found.')
+        );
+      })
+    ),
+
+    // ── UPLOAD BILL TAB ──
+    activeTab==='upload'&&h('div',null,
+      h(Card,{style:{marginBottom:16}},
+        h('p',{style:{fontWeight:600,fontSize:15,margin:'0 0 4px'}},'📷 Upload Distributor Bill — AI Auto-Read'),
+        h('p',{style:{fontSize:13,color:'#888',marginBottom:14}},'Take a clear photo of the distributor bill. AI will automatically read all products, quantities, rates and GST. You can correct any mistakes before saving to stock.'),
+        h('div',{style:{border:'2px dashed #185FA5',borderRadius:12,padding:'30px 20px',textAlign:'center',marginBottom:14,background:'#f5f8ff',cursor:'pointer'},
+          onClick:function(){document.getElementById('billUploadInput').click();}},
+          h('div',{style:{fontSize:48,marginBottom:8}},'📄'),
+          h('p',{style:{fontSize:15,fontWeight:500,color:'#185FA5',margin:'0 0 6px'}},'Click to upload bill photo'),
+          h('p',{style:{fontSize:12,color:'#aaa',margin:0}},'Supports JPG, PNG, PDF'),
+          h('input',{type:'file',accept:'image/*,.pdf',onChange:handleBillUpload,id:'billUploadInput',style:{display:'none'}})
+        ),
+        processing&&h('div',{style:{textAlign:'center',padding:'24px',background:'#f5f8ff',borderRadius:10}},
+          h('div',{style:{fontSize:32,marginBottom:8}},'🤖'),
+          h('p',{style:{fontSize:15,fontWeight:500,color:'#185FA5',margin:'0 0 4px'}},'AI is reading your bill...'),
+          h('p',{style:{fontSize:12,color:'#888',margin:0}},'Takes 5-15 seconds. Please wait.')
+        )
+      ),
+      parsedItems&&h(Card,null,
+        h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}},
+          h('div',null,
+            h('p',{style:{fontWeight:600,fontSize:15,margin:'0 0 2px'}},'✏️ Review & Correct Bill Items'),
+            h('p',{style:{fontSize:12,color:'#888',margin:0}},parsedItems.length+' items found. Check each one, correct if needed, then confirm.')
+          ),
+          h('div',{style:{background:'#EAF3DE',borderRadius:8,padding:'6px 12px',fontSize:13,color:'#3B6D11',fontWeight:500}},parsedItems.filter(function(it){return it.confirmed;}).length+'/'+parsedItems.length+' confirmed')
+        ),
+        parsedItems.map(function(item,i){
+          var gr=Number(item.gst)||9;
+          var tot=Number(item.total)||0;
+          var base=gr>0?tot*100/(100+gr):tot;
+          var cgst=base*gr/2/100;
+          return h('div',{key:i,style:{background:item.confirmed?'#f0fff4':'#fafafa',border:'1.5px solid '+(item.confirmed?'#3B6D11':'#ddd'),borderRadius:10,padding:'12px',marginBottom:10}},
+            h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}},
+              h('span',{style:{fontWeight:600,fontSize:13,color:item.confirmed?'#3B6D11':'#555'}},'Item '+(i+1)+(item.matched?' (auto-matched ✓)':' (manual match needed)')),
+              h('button',{onClick:function(){updateItem(i,{confirmed:!item.confirmed});},
+                style:{background:item.confirmed?'#3B6D11':'#185FA5',color:'#fff',border:'none',borderRadius:6,padding:'5px 14px',cursor:'pointer',fontSize:12,fontWeight:600}},
+                item.confirmed?'✓ Confirmed':'Confirm')
+            ),
+            h('div',{style:{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr',gap:8,marginBottom:8}},
+              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Product Name'),h('input',{value:item.name||'',onChange:function(ev){updateItem(i,{name:ev.target.value});},style:Object.assign({},IS,{fontSize:12})})),
+              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Qty'),h('input',{type:'number',value:item.qty||'',onChange:function(ev){updateItem(i,{qty:ev.target.value});},style:Object.assign({},IS,{fontSize:12})})),
+              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Unit'),h('select',{value:item.unit||'kg',onChange:function(ev){updateItem(i,{unit:ev.target.value});},style:Object.assign({},IS,{fontSize:12})},['kg','litre','g','ml','piece','bag'].map(function(u){return h('option',{key:u},u);}))),
+              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Rate/unit Rs'),h('input',{type:'number',value:item.ratePerUnit||'',onChange:function(ev){updateItem(i,{ratePerUnit:ev.target.value});},style:Object.assign({},IS,{fontSize:12})})),
+              h('div',null,h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},'Total Rs'),h('input',{type:'number',value:item.total||'',onChange:function(ev){updateItem(i,{total:ev.target.value});},style:Object.assign({},IS,{fontSize:12})}))
+            ),
+            h('div',{style:{display:'grid',gridTemplateColumns:'2fr 1fr',gap:8}},
+              h('div',null,
+                h('label',{style:{display:'block',fontSize:11,color:'#666',marginBottom:2}},item.matched?'Matched product (auto) — change if wrong':'Select product from stock *'),
+                h('select',{value:item.productId||'',onChange:function(ev){updateItem(i,{productId:ev.target.value});},style:Object.assign({},IS,{fontSize:12,borderColor:item.productId?'#b7ebc8':'#ffb3b3'})},
+                  h('option',{value:''},'-- Select product --'),
+                  data.products.map(function(p){return h('option',{key:p.id,value:p.id},p.name+(p.subType?' ('+p.subType+')':'')+' ['+p.category+'] stock:'+fmt(p.stock)+p.unit);})
+                )
+              ),
+              h('div',{style:{background:'#EEEDFE',borderRadius:8,padding:'8px 10px'}},
+                h('p',{style:{fontSize:10,color:'#3C3489',margin:'0 0 2px',fontWeight:500}},'GST '+gr+'% Breakdown'),
+                h('p',{style:{fontSize:11,color:'#3C3489',margin:'0 0 2px'}},'Base: Rs.'+fmt(base)),
+                h('p',{style:{fontSize:11,color:'#3C3489',margin:0}},'CGST+SGST: Rs.'+fmt(cgst)+'+Rs.'+fmt(cgst))
+              )
+            )
+          );
+        }),
+        h('div',{style:{display:'flex',gap:10,justifyContent:'space-between',alignItems:'center',marginTop:14,paddingTop:12,borderTop:'1px solid #eee'}},
+          h('p',{style:{fontSize:13,color:'#888',margin:0}},'Only confirmed items with a selected product will be added to stock'),
+          h('div',{style:{display:'flex',gap:8}},
+            h(Btn,{variant:'secondary',onClick:function(){setParsedItems(null);}},'Cancel'),
+            h(Btn,{onClick:addConfirmedToStock},'Add '+parsedItems.filter(function(it){return it.confirmed&&it.productId;}).length+' Items to Stock')
+          )
+        )
+      )
+    ),
+
+    // ── DOWNLOAD SHEET TAB ──
+    activeTab==='sheet'&&h('div',null,
+      h(Card,{style:{marginBottom:14}},
+        h('p',{style:{fontWeight:600,fontSize:15,margin:'0 0 14px'}},'📊 Distributor Purchase Sheet'),
+        h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:10,marginBottom:14}},
+          h('div',null,
+            h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Distributor'),
+            h('select',{value:filterDist,onChange:function(ev){setFilterDist(ev.target.value);},style:IS},
+              h('option',{value:''},'All Distributors'),
+              data.distributors.map(function(d){return h('option',{key:d.id,value:d.id},d.name);})
+            )
+          ),
+          h('div',null,
+            h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Category'),
+            h('select',{value:filterCat,onChange:function(ev){setFilterCat(ev.target.value);},style:IS},
+              h('option',{value:'all'},'All Categories'),
+              CATS.map(function(c){return h('option',{key:c,value:c},c);})
+            )
+          ),
+          h('div',null,h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'From Date'),h('input',{type:'date',value:filterFrom,onChange:function(ev){setFilterFrom(ev.target.value);},style:IS})),
+          h('div',null,h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'To Date'),h('input',{type:'date',value:filterTo,onChange:function(ev){setFilterTo(ev.target.value);},style:IS}))
+        ),
+        h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:14}},
+          h('div',{style:{background:'#E6F1FB',borderRadius:8,padding:'10px',textAlign:'center'}},h('p',{style:{fontSize:11,color:'#888',margin:'0 0 3px'}},'Total Bills'),h('p',{style:{fontSize:18,fontWeight:600,color:'#185FA5',margin:0}},filtPurchases.length)),
+          h('div',{style:{background:'#FAEEDA',borderRadius:8,padding:'10px',textAlign:'center'}},h('p',{style:{fontSize:11,color:'#888',margin:'0 0 3px'}},'Total Spent'),h('p',{style:{fontSize:18,fontWeight:600,color:'#854F0B',margin:0}},'Rs.'+fmt(totalSpent))),
+          h('div',{style:{background:'#EEEDFE',borderRadius:8,padding:'10px',textAlign:'center'}},h('p',{style:{fontSize:11,color:'#888',margin:'0 0 3px'}},'GST Paid'),h('p',{style:{fontSize:18,fontWeight:600,color:'#3C3489',margin:0}},'Rs.'+fmt(totalGST)))
+        ),
+        h('div',{style:{overflowX:'auto',marginBottom:14}},
+          h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:800}},
+            h('thead',null,h('tr',{style:{background:'#185FA5'}},
+              ['Date','Distributor','Product','Category','Qty','Rate/unit','Total','GST','Payment','Stock?'].map(function(hd){return h('th',{key:hd,style:{padding:'7px 6px',color:'#fff',fontWeight:500,textAlign:'left',whiteSpace:'nowrap'}},hd);})
+            )),
+            h('tbody',null,
+              filtPurchases.length===0?h('tr',null,h('td',{colSpan:10,style:{padding:20,textAlign:'center',color:'#aaa'}},'No purchases match the filters')):
+              filtPurchases.slice().reverse().reduce(function(acc,purch){
+                var dist=data.distributors.find(function(d){return d.id===purch.distributorId;})||{name:'Unknown'};
+                var pm=purch.paymentMode||'cash';
+                var pmLabel=pm==='due'?'Due':pm==='online'?'Online':pm==='cheque'?'Cheque':'Cash';
+                var items=(purch.items||[]).filter(function(it){
+                  if(filterCat==='all')return true;
+                  var prod=data.products.find(function(p){return p.id===it.productId;});
+                  return prod&&prod.category===filterCat;
+                });
+                items.forEach(function(it,ii){
+                  var prod=data.products.find(function(p){return p.id===it.productId;})||{name:'Unknown',category:'',unit:'kg'};
+                  acc.push(h('tr',{key:purch.id+'-'+ii,style:{borderBottom:'0.5px solid #eee',background:ii%2===0?'#fff':'#fafafa'}},
+                    h('td',{style:{padding:'5px 6px',whiteSpace:'nowrap'}},ii===0?purch.date:''),
+                    h('td',{style:{padding:'5px 6px',fontWeight:500}},ii===0?dist.name:''),
+                    h('td',{style:{padding:'5px 6px'}},prod.name),
+                    h('td',{style:{padding:'5px 6px'}},h('span',{style:{background:catColor(prod.category)==='green'?'#EAF3DE':catColor(prod.category)==='red'?'#FCEBEB':catColor(prod.category)==='amber'?'#FAEEDA':'#E6F1FB',color:catColor(prod.category)==='green'?'#3B6D11':catColor(prod.category)==='red'?'#A32D2D':catColor(prod.category)==='amber'?'#854F0B':'#185FA5',borderRadius:20,padding:'1px 8px',fontSize:11}},prod.category)),
+                    h('td',{style:{padding:'5px 6px'}},fmt(it.qty||0)+' '+(prod.unit||'kg')),
+                    h('td',{style:{padding:'5px 6px'}},'Rs.'+fmt(it.ratePerUnit||0)),
+                    h('td',{style:{padding:'5px 6px',color:'#185FA5',fontWeight:500}},'Rs.'+fmt(it.totalWithGst||0)),
+                    h('td',{style:{padding:'5px 6px',color:'#3C3489'}},'Rs.'+fmt(it.gstPaid||0)),
+                    h('td',{style:{padding:'5px 6px'}},ii===0?pmLabel:''),
+                    h('td',{style:{padding:'5px 6px',textAlign:'center'}},ii===0?(purch.stockAdded?h('span',{style:{color:'#3B6D11',fontWeight:600}},'Yes'):h('span',{style:{color:'#A32D2D'}},'No')):'')
+                  ));
+                });
+                return acc;
+              },[])
+            )
+          )
+        ),
+        h('button',{onClick:downloadCSV,
+          style:{background:'#3B6D11',color:'#fff',border:'none',borderRadius:10,padding:'12px 24px',cursor:'pointer',fontSize:14,fontWeight:600,display:'inline-flex',alignItems:'center',gap:8}
+        },'⬇️ Download as Excel / CSV')
+      )
+    )
+  );
+}
+
+
 // ── MAIN APP ───────────────────────────────────────────────────────────────────
 var ALL_TABS=[
   {id:'dashboard',label:'Dashboard',roles:['admin']},
@@ -1457,6 +1804,7 @@ var ALL_TABS=[
   {id:'farmers',label:'Farmers',roles:['admin','worker']},
   {id:'sales',label:'Sales & Bills',roles:['admin','worker']},
   {id:'reports',label:'Reports',roles:['admin']},
+  {id:'ipms',label:'🏛️ IPMS',roles:['admin']},
   {id:'users',label:'Users',roles:['admin']},
   {id:'settings',label:'Settings',roles:['admin','worker']},
 ];
@@ -1515,7 +1863,8 @@ function App(){
         tab==='sales'&&h(Sales,Object.assign({},tp,{shopName:shopName})),
         tab==='reports'&&h(Reports,tp),
         tab==='users'&&h(Users,{currentUser:user}),
-        tab==='settings'&&h(Settings,{shopName:shopName,setShopName:setShopName,currentUser:user})
+        tab==='settings'&&h(Settings,{shopName:shopName,setShopName:setShopName,currentUser:user}),
+        tab==='ipms'&&h(IPMSPanel,{data:data,setData:setData})
       )
     )
   );

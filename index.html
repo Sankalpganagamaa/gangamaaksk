@@ -676,10 +676,6 @@ function Distributors(props){
   var ef={id:null,name:'',phone:'',address:'',company:''};
   var ep={date:toDay(),items:[{productId:'',pieces:'',pieceSize:'',pieceSizeUnit:'g',price:'',gstRate:9}],paid:'',paymentMode:'cash',notes:''};
   var s0=useState(false);var showF=s0[0];var setShowF=s0[1];
-  var sb=useState(false);var showBulk=sb[0];var setShowBulk=sb[1];
-  var sbd=useState('');var bulkDist=sbd[0];var setBulkDist=sbd[1];
-  var sbdt=useState(toDay());var bulkDate=sbdt[0];var setBulkDate=sbdt[1];
-  var sbpm=useState('cash');var bulkPayMode=sbpm[0];var setBulkPayMode=sbpm[1];
   var emptyRow=function(){return {name:'',category:'Pesticide',subType:'',unit:'kg',pieces:'',pieceSize:'',pieceSizeUnit:'g',buyPrice:'',sellPrice:'',gstRate:9,stock:'0',minStock:'5'};};
   var sr=useState([emptyRow()]);var bulkRows=sr[0];var setBulkRows=sr[1];
   function addBulkRow(){setBulkRows(function(prev){return [...prev,emptyRow()];});}

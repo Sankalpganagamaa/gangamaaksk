@@ -676,57 +676,12 @@ function Distributors(props){
   var ef={id:null,name:'',phone:'',address:'',company:''};
   var ep={date:toDay(),items:[{productId:'',pieces:'',pieceSize:'',pieceSizeUnit:'g',price:'',gstRate:9}],paid:'',paymentMode:'cash',notes:''};
   var s0=useState(false);var showF=s0[0];var setShowF=s0[1];
-  var emptyRow=function(){return {name:'',category:'Pesticide',subType:'',unit:'kg',pieces:'',pieceSize:'',pieceSizeUnit:'g',buyPrice:'',sellPrice:'',gstRate:9,stock:'0',minStock:'5'};};
-  var sr=useState([emptyRow()]);var bulkRows=sr[0];var setBulkRows=sr[1];
-  function addBulkRow(){setBulkRows(function(prev){return [...prev,emptyRow()];});}
-  function remBulkRow(i){setBulkRows(function(prev){return prev.filter(function(_,idx){return idx!==i;});});}
-  function upBulkRow(i,v){setBulkRows(function(prev){return prev.map(function(r,idx){
-    if(idx!==i)return r;
-    var updated=Object.assign({},r,v);
-    if(v.category){var gi=getGST(v.category);updated.gstRate=gi.gst;}
-    return updated;
-  });});}
-  function saveBulk(){
-    if(!bulkDist)return alert('Please select a distributor');
-    var valid=bulkRows.filter(function(r){return r.name&&r.sellPrice;});
-    if(!valid.length)return alert('Fill at least one product name and selling price');
-    var newProds=valid.map(function(r){
-      var gi=getGST(r.category);
-      var gr=r.gstRate!=null?Number(r.gstRate):gi.gst;
-      var pc=Number(r.pieces)||0;var ps=Number(r.pieceSize)||0;var psu=r.pieceSizeUnit||'g';
-      var finalStock=Number(r.stock)||0;
-      if(pc>0&&ps>0){finalStock=Math.round(pc*sib(ps,psu)*1000)/1000;}
-      return Object.assign({},r,{id:genId(),gstRate:gr,stock:finalStock,pieces:pc||'',pieceSize:ps||'',pieceSizeUnit:psu});
-    });
-    // Create purchase record linked to distributor
-    var purchItems=newProds.map(function(p){
-      var gr=Number(p.gstRate)||0;
-      var pc=Number(p.pieces)||0;var ps=Number(p.pieceSize)||0;var psu=p.pieceSizeUnit||'g';
-      var qty=pc>0&&ps>0?Math.round(pc*sib(ps,psu)*1000)/1000:Number(p.stock)||0;
-      var rate=Number(p.buyPrice)||0;
-      var totalIncl=qty*rate;
-      var totalBase=gr>0?totalIncl*100/(100+gr):totalIncl;
-      var cgst=totalBase*gr/2/100;
-      return {productId:p.id,productName:p.name,qty:qty,pieces:pc,pieceSize:ps,pieceSizeUnit:psu,
-        gstRate:gr,ratePerUnit:rate,totalBase:totalBase,cgstPaid:cgst,sgstPaid:cgst,gstPaid:cgst*2,totalWithGst:totalIncl};
-    });
-    var totalAmt=purchItems.reduce(function(s,it){return s+it.totalWithGst;},0);
-    var totalGst=purchItems.reduce(function(s,it){return s+it.gstPaid;},0);
-    var paidAmt=bulkPayMode==='due'?0:totalAmt;
-    var purchase={id:genId(),distributorId:bulkDist,date:bulkDate,items:purchItems,
-      totalAmount:totalAmt,totalGstPaid:totalGst,paid:paidAmt,paymentMode:bulkPayMode,
-      notes:'Added via bulk stock entry',stockAdded:true};
-    var products=[...data.products,...newProds];
-    var purchases=[...data.purchases,purchase];
-    var nd=Object.assign({},data,{products:products,purchases:purchases});setData(nd);saveData(nd);
-    setShowBulk(false);setBulkRows([emptyRow()]);setBulkDist('');setBulkDate(toDay());setBulkPayMode('cash');
-    alert(newProds.length+' product(s) added to stock and purchase recorded under distributor!');
-  }
   var s1=useState(null);var showP=s1[0];var setShowP=s1[1];
   var s2=useState(null);var stockQ=s2[0];var setStockQ=s2[1];
   var s3=useState(ef);var form=s3[0];var setForm=s3[1];
   var s4=useState(ep);var pf=s4[0];var setPf=s4[1];
   var s10=useState(false);var showQA=s10[0];var setShowQA=s10[1];
+  var s20=useState(null);var expandedDist=s20[0];var setExpandedDist=s20[1];
   var qaEf={name:'',category:'Pesticide',subType:'',unit:'kg',stock:'0',buyPrice:'',sellPrice:'',minStock:'5',gstRate:9,pieces:'',pieceSize:'',pieceSizeUnit:'g'};
   var s11=useState(qaEf);var qaForm=s11[0];var setQaForm=s11[1];
   function qaSet(v){setQaForm(function(f){return Object.assign({},f,v);});}
@@ -738,7 +693,7 @@ function Distributors(props){
     var products=[...data.products,newProd];
     var nd=Object.assign({},data,{products:products});setData(nd);saveData(nd);
     setShowQA(false);setQaForm(qaEf);
-    alert('Product "'+newProd.name+'" added to stock! Now select it from the dropdown.');
+    alert('Product "'+newProd.name+'" added! Now select it from the dropdown.');
   }
   function saveDist(){
     if(!form.name)return alert('Name required');

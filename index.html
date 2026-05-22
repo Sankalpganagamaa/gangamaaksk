@@ -981,7 +981,19 @@ function Settings(props){
     });
   }
   function disconnectDB(){if(!confirm('Disconnect database?'))return;lsDel(SK.sburl);lsDel(SK.sbkey);setSbUrl('');setSbKey('');setDbSt('disconnected');}
-  function syncNow(){setBusy(true);var d=loadLocal();sbSet('agri_data',1,d).then(function(){setBusy(false);alert('Synced!');});}
+  function syncNow(){
+    setBusy(true);
+    sbGet('agri_data',1).then(function(remote){
+      setBusy(false);
+      if(remote){
+        lsSet(SK.data,remote);
+        alert('Data loaded from cloud! Please refresh the page to see your data.');
+        window.location.reload();
+      } else {
+        alert('No data found in cloud database.');
+      }
+    });
+  }
   return h('div',{style:{maxWidth:500}},
     h('div',{style:{display:'flex',gap:6,marginBottom:20,borderBottom:'0.5px solid #eee',paddingBottom:12,flexWrap:'wrap'}},
       tabs.map(function(t){return h('button',{key:t.id,onClick:function(){setStab(t.id);},style:{padding:'7px 16px',border:'none',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:stab===t.id?500:400,background:stab===t.id?'#185FA5':'#f0f0f0',color:stab===t.id?'#fff':'#555'}},t.label);})
@@ -1050,8 +1062,18 @@ function App(){
   var s3=useState(function(){return lsGet(SK.shop,'Ganga Maa KSK');});var shopName=s3[0];var setShopName=s3[1];
   var s4=useState(false);var sideOpen=s4[0];var setSideOpen=s4[1];
   useEffect(function(){
-    var local=loadLocal();setData(local);
-    if(sbReady()){sbGet('agri_data',1).then(function(r){if(r){setData(r);lsSet(SK.data,r);}});}
+    // First show local data
+    var local=loadLocal();
+    setData(local);
+    // Then fetch from Supabase if connected
+    if(sbReady()){
+      sbGet('agri_data',1).then(function(r){
+        if(r){
+          lsSet(SK.data,r);
+          setData(r);
+        }
+      }).catch(function(){});
+    }
   },[]);
   var handleSetData=useCallback(function(d){setData(d);saveData(d);},[]);
   if(!user)return h(Login,{onLogin:function(u){setUser(u);setTab(u.role==='admin'?'dashboard':'sales');}});

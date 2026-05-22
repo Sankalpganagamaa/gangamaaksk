@@ -847,11 +847,22 @@ function Distributors(props){
                     );
                   }))
                 ),
-                h('div',{style:{display:'flex',justifyContent:'space-between',paddingTop:4,borderTop:'0.5px solid #ddd'}},
-                  h('span',{style:{fontSize:11,color:'#888'}},'GST paid: ₹'+fmt(purch.totalGstPaid||0)),
+                h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:6,borderTop:'0.5px solid #ddd'}},
                   h('div',null,
-                    h('span',{style:{fontWeight:700,fontSize:13,color:'#185FA5'}},'₹'+fmt(purch.totalAmount)),
+                    h('span',{style:{fontSize:11,color:'#888'}},'GST paid: ₹'+fmt(purch.totalGstPaid||0)),
                     (purch.totalAmount-(purch.paid||0))>0&&h('span',{style:{fontSize:11,color:'#A32D2D',marginLeft:8}},'Due: ₹'+fmt(purch.totalAmount-(purch.paid||0)))
+                  ),
+                  h('div',{style:{display:'flex',alignItems:'center',gap:8}},
+                    h('span',{style:{fontWeight:700,fontSize:13,color:'#185FA5'}},'₹'+fmt(purch.totalAmount)),
+                    h('button',{
+                      onClick:function(){
+                        if(!confirm('Delete this purchase bill of ₹'+fmt(purch.totalAmount)+' dated '+purch.date+'?\nThis will NOT reverse stock changes.'))return;
+                        var purchases=data.purchases.filter(function(p){return p.id!==purch.id;});
+                        var nd=Object.assign({},data,{purchases:purchases});
+                        setData(nd);saveData(nd);
+                      },
+                      style:{background:'#FCEBEB',color:'#A32D2D',border:'none',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:12,fontWeight:500}
+                    },'🗑️ Delete')
                   )
                 )
               );

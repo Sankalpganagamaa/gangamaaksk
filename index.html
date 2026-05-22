@@ -307,6 +307,168 @@ function Stock(props){
   var s0=useState(false);var showF=s0[0];var setShowF=s0[1];
   var sb=useState(false);var showBulk=sb[0];var setShowBulk=sb[1];
   var sbe=useState(false);var showBillEntry=sbe[0];var setShowBillEntry=sbe[1];
+  var sex=useState(false);var showExcel=sex[0];var setShowExcel=sex[1];
+  var sxd=useState('');var excelDist=sxd[0];var setExcelDist=sxd[1];
+  var sxdt=useState(toDay());var excelDate=sxdt[0];var setExcelDate=sxdt[1];
+  var sxpm=useState('cash');var excelPayMode=sxpm[0];var setExcelPayMode=sxpm[1];
+  var sxr=useState(null);var excelRows=sxr[0];var setExcelRows=sxr[1];
+  var sxe=useState('');var excelError=sxe[0];var setExcelError=sxe[1];
+
+  // Download sample Excel (CSV format that opens in Excel)
+  function downloadSampleExcel(){
+    var nl=String.fromCharCode(10);
+    var headers=['Product Name','Category (Seeds/Fertilizer/Pesticide/Insecticide/Herbicide/Fungicide/Bio-Pesticide/Zinc/Micronutrient)','Sub Type (optional)','Pieces (No. of packets)','Size per piece (number only)','Size Unit (g / ml / kg / litre)','Stock Unit (kg / litre)','Buy Price per piece Rs (incl GST)','Sell Price per piece Rs (incl GST)'];
+    var samples=[
+      ['Tapuz','Pesticide','','10','250','g','kg','218','280'],
+      ['Aramashi','Pesticide','','10','100','g','kg','320','400'],
+      ['Saaf','Fungicide','','10','250','g','kg','320','400'],
+      ['Urea','Fertilizer','Urea','10','50000','g','kg','300','350'],
+      ['Wheat Seeds','Seeds','','10','500','g','kg','120','150'],
+    ];
+    var csvRows=[headers,...samples];
+    var csv=csvRows.map(function(r){return r.map(function(cell){var s=String(cell).replace(/"/g,'""');return '"'+s+'"';}).join(',');}).join(nl);
+    var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.download='GangaMaaKSK_Stock_Template.csv';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // Parse uploaded CSV/Excel file
+  function parseExcelFile(ev){
+    var file=ev.target.files[0];if(!file)return;
+    setExcelError('');setExcelRows(null);
+    var reader=new FileReader();
+    reader.onload=function(e){
+      try{
+        var text=e.target.result;
+        // Handle different line endings
+        var nl3=String.fromCharCode(10);var cr3=String.fromCharCode(13);var cleanText=text;while(cleanText.indexOf(cr3+nl3)>=0){cleanText=cleanText.split(cr3+nl3).join(nl3);}cleanText=cleanText.split(cr3).join(nl3);var lines=cleanText.split(nl3).filter(function(l){return l.trim();});
+        if(lines.length<2){setExcelError('File is empty or has no data rows');return;}
+        // Parse CSV properly (handle quoted fields)
+        function parseCSVLine(line){
+          var result=[];var cur='';var inQ=false;
+          for(var i=0;i<line.length;i++){
+            var ch=line[i];
+            if(ch==='"'){
+              if(inQ&&line[i+1]==='"'){cur+='"';i++;}
+              else{inQ=!inQ;}
+            } else if(ch===','&&!inQ){
+              result.push(cur.trim());cur='';
+            } else {cur+=ch;}
+          }
+          result.push(cur.trim());
+          return result;
+        }
+        var headers=parseCSVLine(lines[0]).map(function(h){return h.toLowerCase();});
+        var rows=[];
+        for(var i=1;i<lines.length;i++){
+          var cols=parseCSVLine(lines[i]);
+          if(cols.every(function(x){return !x.trim();}))continue;
+          // Auto fill GST from category, minStock default 5
+          var parsedCat=cols[1]||'Pesticide';
+          var knownCats=['Seeds','Fertilizer','Pesticide','Insecticide','Herbicide','Fungicide','Bio-Pesticide','Zinc','Micronutrient','Plant Growth Regulator','Other'];
+          var matchedCat=knownCats.find(function(cat){return parsedCat.toLowerCase().indexOf(cat.toLowerCase())>=0;})||'Pesticide';
+          var autoGst=getGST(matchedCat).gst;
+          var row={
+            name:cols[0]||'',
+            category:matchedCat,
+            subType:cols[2]||'',
+            pieces:cols[3]||'',
+            pieceSize:cols[4]||'',
+            pieceSizeUnit:cols[5]||'g',
+            unit:cols[6]||'kg',
+            buyPrice:cols[7]||'',
+            sellPrice:cols[8]||'',
+            gstRate:autoGst,
+            minStock:'5',
+            confirmed:false,
+            productId:''
+          };
+          // Try to match existing product
+          var prod=data.products.find(function(p){return p.name.toLowerCase()===row.name.toLowerCase();});
+          if(prod){row.productId=prod.id;row.confirmed=true;}
+          rows.push(row);
+        }
+        if(rows.length===0){setExcelError('No valid rows found in file');return;}
+        setExcelRows(rows);
+      }catch(err){
+        setExcelError('Error reading file: '+err.message);
+      }
+    };
+    reader.onerror=function(){setExcelError('Could not read file');};
+    reader.readAsText(file);
+  }
+
+  function saveExcelToStock(){
+    if(!excelDist)return alert('Please select a distributor');
+    var valid=excelRows.filter(function(r){return r.name&&r.confirmed;});
+    if(!valid.length)return alert('Please confirm at least one row');
+    // Create products
+    var newProds=[];var updProds=[];
+    valid.forEach(function(r){
+      var gi=getGST(r.category);
+      var gr=r.gstRate!=null?Number(r.gstRate):gi.gst;
+      var pc=Number(r.pieces)||0;var ps=Number(r.pieceSize)||0;var psu=r.pieceSizeUnit||'g';
+      var finalStock=pc>0&&ps>0?Math.round(pc*sib(ps,psu)*1000)/1000:0;
+      if(r.productId){
+        var existing=data.products.find(function(p){return p.id===r.productId;});
+        if(existing){
+          updProds.push(Object.assign({},existing,{
+            stock:Math.round((Number(existing.stock)||0)*1000+finalStock*1000)/1000,
+            buyPrice:Number(r.buyPrice)||existing.buyPrice,
+            sellPrice:Number(r.sellPrice)||existing.sellPrice,
+            pieces:pc||existing.pieces,
+            pieceSize:ps||existing.pieceSize,
+            pieceSizeUnit:psu
+          }));
+        }
+      } else {
+        newProds.push({id:genId(),name:r.name,category:r.category,subType:r.subType||'',
+          unit:r.unit||'kg',stock:finalStock,buyPrice:Number(r.buyPrice)||0,
+          sellPrice:Number(r.sellPrice)||0,minStock:Number(r.minStock)||5,
+          gstRate:gr,pieces:pc,pieceSize:ps,pieceSizeUnit:psu});
+      }
+    });
+    var products=data.products.map(function(p){
+      var u=updProds.find(function(x){return x.id===p.id;});return u||p;
+    });
+    products=[...products,...newProds];
+    // Create purchase record
+    var purchItems=valid.map(function(r){
+      var pc2=Number(r.pieces)||0;var ps2=Number(r.pieceSize)||0;var psu2=r.pieceSizeUnit||'g';
+      var qty=pc2>0&&ps2>0?Math.round(pc2*sib(ps2,psu2)*1000)/1000:0;
+      var bp=Number(r.buyPrice)||0;
+      var sib2=psu2==='g'?ps2/1000:psu2==='ml'?ps2/1000:ps2;
+      var ratePerUnit=sib2>0?bp/sib2:bp;
+      var totalIncl=pc2*bp;
+      var gr=Number(r.gstRate)||9;
+      var base=gr>0?totalIncl*100/(100+gr):totalIncl;
+      var cgst=base*gr/2/100;
+      var prodId=r.productId||(newProds.find(function(p){return p.name===r.name;})||{id:''}).id;
+      return {productId:prodId,productName:r.name,qty:qty,pieces:pc2,pieceSize:ps2,
+        pieceSizeUnit:psu2,gstRate:gr,ratePerUnit:ratePerUnit,totalBase:base,
+        cgstPaid:cgst,sgstPaid:cgst,gstPaid:cgst*2,totalWithGst:totalIncl};
+    });
+    var totalAmt=purchItems.reduce(function(s,it){return s+it.totalWithGst;},0);
+    var totalGst=purchItems.reduce(function(s,it){return s+it.gstPaid;},0);
+    var paidAmt=excelPayMode==='due'?0:totalAmt;
+    var purchase={id:genId(),distributorId:excelDist,date:excelDate,items:purchItems,
+      totalAmount:totalAmt,totalGstPaid:totalGst,paid:paidAmt,paymentMode:excelPayMode,
+      notes:'Added via Excel upload',stockAdded:true};
+    var nd=Object.assign({},data,{products:products,purchases:[...data.purchases,purchase]});
+    setData(nd);saveData(nd);
+    setShowExcel(false);setExcelRows(null);setExcelDist('');setExcelDate(toDay());setExcelPayMode('cash');
+    alert(valid.length+' products saved to stock and purchase recorded under distributor!');
+  }
+
+  function updExcelRow(i,v){setExcelRows(function(prev){return prev.map(function(r,idx){
+    if(idx!==i)return r;
+    var u=Object.assign({},r,v);
+    if(v.category){u.gstRate=getGST(v.category).gst;}
+    return u;
+  });});}
   var sbi=useState(null);var billItems=sbi[0];var setBillItems=sbi[1];
   var sbp=useState(null);var billPreview=sbp[0];var setBillPreview=sbp[1];
   function newBillRow(){return {name:'',pieces:'',pieceSize:'',pieceSizeUnit:'g',buyPrice:'',sellPrice:'',gstRate:9,unit:'kg',category:'Pesticide',confirmed:false,productId:''};}
@@ -429,7 +591,8 @@ function Stock(props){
         h('option',null,'All'),...CATS.map(function(c){return h('option',{key:c},c);})
       ),
       h(Btn,{onClick:function(){setShowBulk(true);}},'+ Add Products'),
-      h('button',{onClick:function(){setShowBillEntry(true);setBillItems(null);setBillPreview(null);},style:{padding:'9px 18px',border:'none',borderRadius:8,cursor:'pointer',fontWeight:500,fontSize:14,background:'#854F0B',color:'#fff'}},'📷 Upload Bill → Stock')
+      h('button',{onClick:function(){setShowBillEntry(true);setBillItems(null);setBillPreview(null);},style:{padding:'9px 18px',border:'none',borderRadius:8,cursor:'pointer',fontWeight:500,fontSize:14,background:'#854F0B',color:'#fff'}},'📷 Upload Bill → Stock'),
+      h('button',{onClick:function(){setShowExcel(true);},style:{padding:'9px 18px',border:'none',borderRadius:8,cursor:'pointer',fontWeight:500,fontSize:14,background:'#3B6D11',color:'#fff'}},'📊 Excel Upload')
     ),
     h('div',{style:{overflowX:'auto'}},
       h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:1000}},
@@ -642,6 +805,157 @@ function Stock(props){
         h('div',{style:{display:'flex',gap:10}},
           h(Btn,{variant:'secondary',onClick:function(){setShowBulk(false);}},'Cancel'),
           h(Btn,{onClick:saveBulk},'💾 Save All Products ('+bulkRows.filter(function(r){return r.name;}).length+')')
+        )
+      )
+    ),
+        showExcel&&h(Modal,{title:'📊 Excel Upload → Stock + Distributor',wide:true,onClose:function(){setShowExcel(false);setExcelRows(null);}},
+      // Step 1: Download sample
+      h('div',{style:{background:'#EAF3DE',border:'1px solid #b7ebc8',borderRadius:10,padding:'14px',marginBottom:14}},
+        h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}},
+          h('div',null,
+            h('p',{style:{fontWeight:600,fontSize:14,color:'#3B6D11',margin:'0 0 4px'}},'Step 1: Download Sample File'),
+            h('div',{style:{background:'#fff',borderRadius:8,padding:'8px 12px',marginTop:6,fontSize:12,color:'#555'}},
+              h('p',{style:{fontWeight:500,margin:'0 0 4px',color:'#185FA5'}},'📋 Available Categories (copy exactly):'),
+              h('p',{style:{margin:0,lineHeight:1.8}},CATS.join('  |  '))
+            ),
+            h('p',{style:{fontSize:12,color:'#555',margin:0}},'Download this template → open in Excel/Google Sheets → fill your products → save as CSV → upload below')
+          ),
+          h('button',{onClick:downloadSampleExcel,
+            style:{background:'#3B6D11',color:'#fff',border:'none',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:600,whiteSpace:'nowrap'}},
+            '⬇️ Download Sample Excel')
+        ),
+        h('div',{style:{marginTop:10,background:'#fff',borderRadius:8,padding:'10px 12px',fontSize:12,color:'#555',overflowX:'auto'}},
+          h('table',{style:{borderCollapse:'collapse',fontSize:11,width:'100%'}},
+            h('thead',null,h('tr',{style:{background:'#185FA5'}},
+              ['Product Name','Category','Pieces','Size/pc','Unit','Buy Rs/pc','Sell Rs/pc'].map(function(hd){
+                return h('th',{key:hd,style:{padding:'4px 8px',color:'#fff',fontWeight:500,whiteSpace:'nowrap'}},hd);
+              })
+            )),
+            h('tbody',null,
+              [['Tapuz','Pesticide','10','250g','kg','218','280'],
+               ['Urea','Fertilizer','10','50kg','kg','300','350'],
+               ['Wheat Seeds','Seeds','10','500g','kg','120','150']].map(function(row,i){
+                return h('tr',{key:i,style:{background:i%2===0?'#f9f9f9':'#fff'}},
+                  row.map(function(cell,j){return h('td',{key:j,style:{padding:'4px 8px',borderBottom:'0.5px solid #eee'}},cell);})
+                );
+              })
+            )
+          )
+        )
+      ),
+      // Step 2: Select distributor + date + payment
+      h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:14,background:'#f5f8ff',borderRadius:10,padding:'12px 14px'}},
+        h('div',null,
+          h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Distributor *'),
+          h('select',{value:excelDist,onChange:function(ev){setExcelDist(ev.target.value);},style:Object.assign({},IS,{fontSize:13})},
+            h('option',{value:''},'-- Select distributor --'),
+            data.distributors.map(function(d){return h('option',{key:d.id,value:d.id},d.name+(d.company?' ('+d.company+')':''));})
+          )
+        ),
+        h('div',null,
+          h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:3}},'Date of Purchase'),
+          h('input',{type:'date',value:excelDate,onChange:function(ev){setExcelDate(ev.target.value);},style:Object.assign({},IS,{fontSize:13})})
+        ),
+        h('div',null,
+          h('label',{style:{display:'block',fontSize:12,color:'#666',marginBottom:6}},'Payment Mode'),
+          h('div',{style:{display:'flex',gap:6,flexWrap:'wrap'}},
+            [['cash','💵 Cash'],['online','📱 Online'],['cheque','🏦 Cheque'],['due','⏳ Due']].map(function(opt){
+              return h('button',{key:opt[0],type:'button',onClick:function(){setExcelPayMode(opt[0]);},
+                style:{padding:'5px 10px',border:'1.5px solid '+(excelPayMode===opt[0]?'#185FA5':'#ddd'),
+                  borderRadius:6,cursor:'pointer',fontSize:11,fontWeight:excelPayMode===opt[0]?600:400,
+                  background:excelPayMode===opt[0]?'#185FA5':'#fff',color:excelPayMode===opt[0]?'#fff':'#555'}},opt[1]);
+            })
+          )
+        )
+      ),
+      // Step 3: Upload file
+      h('div',{style:{marginBottom:14}},
+        h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:6}},'Step 2: Upload filled CSV/Excel file'),
+        h('div',{style:{border:'2px dashed #3B6D11',borderRadius:10,padding:'20px',textAlign:'center',background:'#f9fdf9',cursor:'pointer'},
+          onClick:function(){document.getElementById('excelFileInput').click();}},
+          h('div',{style:{fontSize:32,marginBottom:6}},'📂'),
+          h('p',{style:{fontSize:13,fontWeight:500,color:'#3B6D11',margin:'0 0 4px'}},'Click to upload CSV file'),
+          h('p',{style:{fontSize:11,color:'#aaa',margin:0}},'Save your Excel as CSV first (File → Save As → CSV)'),
+          h('input',{type:'file',accept:'.csv,.xlsx,.xls',id:'excelFileInput',style:{display:'none'},onChange:parseExcelFile})
+        ),
+        excelError&&h('p',{style:{color:'#A32D2D',fontSize:13,marginTop:6}},'⚠️ '+excelError)
+      ),
+      // Step 4: Review rows
+      excelRows&&h('div',null,
+        h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}},
+          h('p',{style:{fontWeight:600,fontSize:14,margin:0}},excelRows.length+' rows found — review and confirm'),
+          h('p',{style:{fontSize:12,color:'#3B6D11',margin:0}},'✓ Auto-matched: '+excelRows.filter(function(r){return r.productId;}).length+' | New products: '+excelRows.filter(function(r){return !r.productId;}).length)
+        ),
+        h('div',{style:{overflowX:'auto',maxHeight:'45vh',overflowY:'auto'}},
+          h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:900}},
+            h('thead',{style:{position:'sticky',top:0,zIndex:5}},
+              h('tr',{style:{background:'#3B6D11'}},
+                ['#','Product Name','Category','Pcs','Size/pc','Unit','Buy Rs/pc','Sell Rs/pc','GST (auto)','Qty (auto)','Status','✓',''].map(function(hd){
+                  return h('th',{key:hd,style:{padding:'7px 5px',color:'#fff',fontWeight:500,textAlign:'left',whiteSpace:'nowrap',fontSize:11}},hd);
+                })
+              )
+            ),
+            h('tbody',null,excelRows.map(function(row,i){
+              var gr=Number(row.gstRate)||9;
+              var pc=Number(row.pieces)||0;var ps=Number(row.pieceSize)||0;var psu=row.pieceSizeUnit||'g';
+              var sib2=psu==='g'?ps/1000:psu==='ml'?ps/1000:ps;
+              var autoQty=pc>0&&ps>0?Math.round(pc*sib2*1000)/1000:0;
+              var bp=Number(row.buyPrice)||0;var sp=Number(row.sellPrice)||0;
+              var totalBuy=pc>0?pc*bp:0;var totalSell=pc>0?pc*sp:0;
+              var IS5={width:'100%',padding:'4px 4px',border:'0.5px solid #ddd',borderRadius:4,fontSize:11,outline:'none',background:row.confirmed?'#f0fff4':'#fff',boxSizing:'border-box'};
+              return h('tr',{key:i,style:{borderBottom:'0.5px solid #eee',background:row.confirmed?'#f0fff4':'transparent'}},
+                h('td',{style:{padding:'3px 5px',color:'#888',textAlign:'center',fontSize:11}},i+1),
+                h('td',{style:{padding:'2px 3px',minWidth:100}},h('input',{value:row.name||'',onChange:function(ev){updExcelRow(i,{name:ev.target.value});},style:IS5})),
+                h('td',{style:{padding:'2px 3px',minWidth:110}},
+                  h('select',{value:row.category||'Pesticide',
+                    onChange:function(ev){
+                      var newCat=ev.target.value;
+                      var newGst=getGST(newCat).gst;
+                      updExcelRow(i,{category:newCat,gstRate:newGst});
+                    },
+                    style:Object.assign({},IS5,{padding:'4px 2px',borderColor:'#185FA5'})},
+                    CATS.map(function(cat){return h('option',{key:cat,value:cat},cat);}))
+                ),
+                h('td',{style:{padding:'2px 3px',width:45}},h('input',{type:'number',value:row.pieces||'',onChange:function(ev){updExcelRow(i,{pieces:ev.target.value});},style:IS5})),
+                h('td',{style:{padding:'2px 3px',width:90}},h('div',{style:{display:'flex',gap:2}},h('input',{type:'number',value:row.pieceSize||'',onChange:function(ev){updExcelRow(i,{pieceSize:ev.target.value});},style:Object.assign({},IS5,{flex:2})}),h('select',{value:row.pieceSizeUnit||'g',onChange:function(ev){updExcelRow(i,{pieceSizeUnit:ev.target.value});},style:Object.assign({},IS5,{flex:1,padding:'4px 1px'})},['g','ml','kg','litre'].map(function(u){return h('option',{key:u},u);})))),
+                h('td',{style:{padding:'2px 3px',width:50}},h('select',{value:row.unit||'kg',onChange:function(ev){updExcelRow(i,{unit:ev.target.value});},style:IS5},['kg','litre','g','ml'].map(function(u){return h('option',{key:u},u);}))),
+                h('td',{style:{padding:'2px 3px',width:70}},h('div',null,h('input',{type:'number',value:row.buyPrice||'',onChange:function(ev){updExcelRow(i,{buyPrice:ev.target.value});},style:IS5}),totalBuy>0&&h('p',{style:{fontSize:9,color:'#854F0B',margin:'1px 0 0'}},'=Rs.'+fmt(totalBuy)))),
+                h('td',{style:{padding:'2px 3px',width:70}},h('div',null,h('input',{type:'number',value:row.sellPrice||'',onChange:function(ev){updExcelRow(i,{sellPrice:ev.target.value});},style:IS5}),totalSell>0&&h('p',{style:{fontSize:9,color:'#3B6D11',margin:'1px 0 0'}},'=Rs.'+fmt(totalSell)))),
+                h('td',{style:{padding:'4px 5px',textAlign:'center'}},
+                  h('span',{style:{background:'#E6F1FB',color:'#185FA5',borderRadius:20,padding:'2px 8px',fontSize:11,fontWeight:600}},(row.gstRate||0)+'%'),
+                  h('p',{style:{fontSize:9,color:'#888',margin:'2px 0 0',textAlign:'center'}},'auto')
+                ),
+                h('td',{style:{padding:'4px 5px',background:'#f0f4ff',textAlign:'center',fontWeight:600,color:'#185FA5',fontSize:11,whiteSpace:'nowrap'}},autoQty>0?fmt(autoQty)+' '+(row.unit||'kg'):h('span',{style:{color:'#bbb',fontWeight:400}},'—')),
+                h('td',{style:{padding:'4px 5px',textAlign:'center'}},
+                  row.productId
+                    ?h('span',{style:{background:'#EAF3DE',color:'#3B6D11',borderRadius:20,padding:'2px 8px',fontSize:10,fontWeight:600}},'Update existing')
+                    :h('span',{style:{background:'#E6F1FB',color:'#185FA5',borderRadius:20,padding:'2px 8px',fontSize:10,fontWeight:600}},'Add new')
+                ),
+                h('td',{style:{padding:'2px 3px',textAlign:'center'}},
+                  h('button',{onClick:function(){updExcelRow(i,{confirmed:!row.confirmed});},
+                    style:{background:row.confirmed?'#3B6D11':'#ddd',color:row.confirmed?'#fff':'#555',border:'none',borderRadius:4,padding:'4px 8px',cursor:'pointer',fontSize:13,fontWeight:700}},
+                    row.confirmed?'✓':'○')
+                ),
+                h('td',{style:{padding:'2px 3px',textAlign:'center'}},
+                  h('button',{onClick:function(){setExcelRows(function(prev){return prev.filter(function(_,idx){return idx!==i;});});},
+                    style:{background:'#FCEBEB',color:'#A32D2D',border:'none',borderRadius:4,padding:'4px 6px',cursor:'pointer',fontSize:11}},'✕')
+                )
+              );
+            }))
+          )
+        ),
+        h('div',{style:{display:'flex',gap:8,alignItems:'center',marginTop:10,padding:'8px 10px',background:'#f5f8ff',borderRadius:8,fontSize:12,flexWrap:'wrap',justifyContent:'space-between'}},
+          h('div',{style:{display:'flex',gap:12}},
+            h('span',{style:{color:'#555'}},'Total rows: '+excelRows.length),
+            h('span',{style:{color:'#3B6D11',fontWeight:600}},'Confirmed: '+excelRows.filter(function(r){return r.confirmed;}).length),
+            h('span',{style:{color:'#854F0B',fontWeight:600}},'Buy Total: Rs.'+fmt(excelRows.reduce(function(s,r){var pc2=Number(r.pieces)||0;return s+(pc2>0?pc2*(Number(r.buyPrice)||0):0);},0))),
+            h('span',{style:{color:'#3B6D11',fontWeight:600}},'Sell Total: Rs.'+fmt(excelRows.reduce(function(s,r){var pc2=Number(r.pieces)||0;return s+(pc2>0?pc2*(Number(r.sellPrice)||0):0);},0)))
+          ),
+          h('div',{style:{display:'flex',gap:8}},
+            h('button',{onClick:function(){setExcelRows(function(prev){return prev.map(function(r){return Object.assign({},r,{confirmed:true});});});},style:{background:'#EAF3DE',color:'#3B6D11',border:'none',borderRadius:6,padding:'6px 12px',cursor:'pointer',fontSize:12,fontWeight:600}},'✓ Confirm All'),
+            h(Btn,{variant:'secondary',onClick:function(){setShowExcel(false);setExcelRows(null);}},'Cancel'),
+            h(Btn,{onClick:saveExcelToStock},'💾 Save '+excelRows.filter(function(r){return r.confirmed;}).length+' to Stock')
+          )
         )
       )
     ),

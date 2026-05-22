@@ -340,25 +340,83 @@ function Stock(props){
       h(Btn,{onClick:function(){setForm(ef);setShowF(true);}},'+ Add Product')
     ),
     h('div',{style:{overflowX:'auto'}},
-      h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:13}},
-        h('thead',null,h('tr',{style:{background:'#f7f7f7'}},
-          ['Product','Category','Packet','Pieces','Stock','Buy/unit','Sell/unit','GST',''].map(function(hd){return h('th',{key:hd,style:{textAlign:'left',padding:'8px 10px',fontWeight:500,whiteSpace:'nowrap'}},hd);})
+      h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:1000}},
+        h('thead',null,h('tr',{style:{background:'#185FA5'}},
+          ['Date','Product Name','Total Stock','Pieces','Size/pc','Buy ₹/pc (incl GST)','Total Buy Amount','Sell ₹/pc (incl GST)','Total Sell Amount','GST','Actions'].map(function(hd){
+            return h('th',{key:hd,style:{textAlign:'left',padding:'9px 8px',fontWeight:500,whiteSpace:'nowrap',color:'#fff',fontSize:12}},hd);
+          })
         )),
         h('tbody',null,
-          fil.length===0?h('tr',null,h('td',{colSpan:9,style:{padding:20,textAlign:'center',color:'#aaa'}},'No products')):
-          fil.map(function(p){
-            var gr=p.gstRate!=null?p.gstRate:getGST(p.category).gst;
+          fil.length===0?h('tr',null,h('td',{colSpan:11,style:{padding:20,textAlign:'center',color:'#aaa'}},'No products')):
+          fil.map(function(p,idx){
+            var gr=p.gstRate!=null?Number(p.gstRate):getGST(p.category).gst;
             var low=Number(p.stock)<=(Number(p.minStock)||5);
-            return h('tr',{key:p.id,style:{borderBottom:'0.5px solid #f0f0f0',background:low?'#fff9f9':'transparent'}},
-              h('td',{style:{padding:'9px 10px'}},h('p',{style:{fontWeight:500,margin:0,fontSize:13}},p.name),p.subType&&h('p',{style:{fontSize:11,color:'#888',margin:0}},p.subType)),
-              h('td',{style:{padding:'9px 10px'}},h(Badge,{color:catColor(p.category)},p.category)),
-              h('td',{style:{padding:'9px 10px'}},p.pieceSize?h('span',{style:{background:'#FFF8E7',border:'1px solid #FAEEDA',borderRadius:6,padding:'3px 8px',fontSize:12,color:'#854F0B',fontWeight:500}},p.pieceSize+' '+(p.pieceSizeUnit||'g')+'/pc'):h('span',{style:{color:'#aaa',fontSize:12}},'—')),
-              h('td',{style:{padding:'9px 10px',color:'#185FA5',fontWeight:500,fontSize:13}},p.pieces?p.pieces+' pcs':h('span',{style:{color:'#aaa',fontSize:12}},'—')),
-              h('td',{style:{padding:'9px 10px'}},h('p',{style:{fontWeight:600,fontSize:13,color:low?'#A32D2D':'#222',margin:0}},fmt(p.stock)+' '+p.unit),low&&h('p',{style:{fontSize:10,color:'#A32D2D',margin:0}},'⚠ Low')),
-              h('td',{style:{padding:'9px 10px',fontSize:12}},'₹'+fmt(p.buyPrice||0)+'/'+p.unit),
-              h('td',{style:{padding:'9px 10px',color:'#3B6D11',fontWeight:500,fontSize:12}},'₹'+fmt(p.sellPrice||0)+'/'+p.unit),
-              h('td',{style:{padding:'9px 10px',textAlign:'center'}},h('span',{style:{background:'#E6F1FB',color:'#185FA5',borderRadius:20,padding:'2px 8px',fontSize:11,fontWeight:600,display:'block'}},gr+'%'),h('span',{style:{fontSize:10,color:'#888'}},gr/2+'%+'+gr/2+'%')),
-              h('td',{style:{padding:'9px 10px'}},h('span',{style:{display:'flex',gap:6}},h(Btn,{small:true,onClick:function(){setForm(Object.assign({},p));setShowF(true);}},'Edit'),h(Btn,{small:true,danger:true,onClick:function(){del(p.id);}},'Del')))
+            var pc=Number(p.pieces)||0;
+            var bp=Number(p.buyPrice)||0;
+            var sp=Number(p.sellPrice)||0;
+            var totalBuy=pc>0?pc*bp:0;
+            var totalSell=pc>0?pc*sp:0;
+            var totalBuyBase=gr>0?totalBuy*100/(100+gr):totalBuy;
+            var totalSellBase=gr>0?totalSell*100/(100+gr):totalSell;
+            var buyCGST=totalBuyBase*gr/2/100;
+            var sellCGST=totalSellBase*gr/2/100;
+            var profit=totalSell-totalBuy;
+            // Find last purchase date
+            var lastDate=null;
+            data.purchases.forEach(function(purch){
+              if(purch.items){purch.items.forEach(function(it){if(it.productId===p.id&&(!lastDate||purch.date>lastDate))lastDate=purch.date;});}
+            });
+            return h('tr',{key:p.id,style:{borderBottom:'0.5px solid #eee',background:low?'#fff5f5':idx%2===0?'#ffffff':'#fafafa'}},
+              h('td',{style:{padding:'9px 8px',fontSize:12,color:'#666',whiteSpace:'nowrap'}},
+                lastDate?lastDate:h('span',{style:{color:'#bbb'}},'—')
+              ),
+              h('td',{style:{padding:'9px 8px'}},
+                h('p',{style:{fontWeight:600,margin:'0 0 2px',fontSize:13}},p.name),
+                p.subType&&h('p',{style:{fontSize:11,color:'#888',margin:'0 0 3px'}},p.subType),
+                h(Badge,{color:catColor(p.category)},p.category)
+              ),
+              h('td',{style:{padding:'9px 8px'}},
+                h('p',{style:{fontWeight:700,fontSize:14,color:low?'#A32D2D':'#222',margin:'0 0 2px'}},fmt(p.stock)+' '+p.unit),
+                low&&h('span',{style:{fontSize:10,color:'#A32D2D',background:'#FCEBEB',padding:'1px 6px',borderRadius:10}},'⚠ Low')
+              ),
+              h('td',{style:{padding:'9px 8px',textAlign:'center',color:'#185FA5',fontWeight:600}},
+                pc>0?pc+' pcs':h('span',{style:{color:'#bbb'}},'—')
+              ),
+              h('td',{style:{padding:'9px 8px',textAlign:'center'}},
+                p.pieceSize?h('span',{style:{background:'#FFF8E7',border:'1px solid #FAEEDA',borderRadius:6,padding:'3px 8px',fontSize:12,color:'#854F0B',fontWeight:500}},p.pieceSize+' '+(p.pieceSizeUnit||'g')):
+                h('span',{style:{color:'#bbb'}},'—')
+              ),
+              h('td',{style:{padding:'9px 8px'}},
+                h('p',{style:{fontWeight:600,fontSize:13,color:'#185FA5',margin:'0 0 2px'}},'₹'+fmt(bp)),
+                gr>0&&bp>0&&h('p',{style:{fontSize:10,color:'#888',margin:0}},'Base: ₹'+fmt(bp*100/(100+gr)))
+              ),
+              h('td',{style:{padding:'9px 8px'}},
+                totalBuy>0?h('div',null,
+                  h('p',{style:{fontWeight:700,fontSize:13,color:'#854F0B',margin:'0 0 2px'}},'₹'+fmt(totalBuy)),
+                  gr>0&&h('p',{style:{fontSize:10,color:'#888',margin:0}},'CGST ₹'+fmt(buyCGST)+' + SGST ₹'+fmt(buyCGST))
+                ):h('span',{style:{color:'#bbb'}},'—')
+              ),
+              h('td',{style:{padding:'9px 8px'}},
+                h('p',{style:{fontWeight:600,fontSize:13,color:'#3B6D11',margin:'0 0 2px'}},'₹'+fmt(sp)),
+                gr>0&&sp>0&&h('p',{style:{fontSize:10,color:'#888',margin:0}},'Base: ₹'+fmt(sp*100/(100+gr)))
+              ),
+              h('td',{style:{padding:'9px 8px'}},
+                totalSell>0?h('div',null,
+                  h('p',{style:{fontWeight:700,fontSize:13,color:'#3B6D11',margin:'0 0 2px'}},'₹'+fmt(totalSell)),
+                  gr>0&&h('p',{style:{fontSize:10,color:'#888',margin:0}},'CGST ₹'+fmt(sellCGST)+' + SGST ₹'+fmt(sellCGST)),
+                  totalBuy>0&&h('p',{style:{fontSize:11,fontWeight:600,color:profit>=0?'#3B6D11':'#A32D2D',margin:'2px 0 0'}},'Profit: ₹'+fmt(profit))
+                ):h('span',{style:{color:'#bbb'}},'—')
+              ),
+              h('td',{style:{padding:'9px 8px',textAlign:'center'}},
+                h('span',{style:{background:'#E6F1FB',color:'#185FA5',borderRadius:20,padding:'3px 10px',fontSize:12,fontWeight:600,display:'inline-block'}},gr+'%'),
+                h('p',{style:{fontSize:10,color:'#888',margin:'2px 0 0',textAlign:'center'}},gr/2+'%+'+gr/2+'%')
+              ),
+              h('td',{style:{padding:'9px 8px'}},
+                h('div',{style:{display:'flex',flexDirection:'column',gap:4}},
+                  h(Btn,{small:true,onClick:function(){setForm(Object.assign({},p));setShowF(true);}},'✏️ Edit'),
+                  h(Btn,{small:true,danger:true,onClick:function(){del(p.id);}},'🗑️ Del')
+                )
+              )
             );
           })
         )

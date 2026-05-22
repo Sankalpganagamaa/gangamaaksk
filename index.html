@@ -305,6 +305,56 @@ function Stock(props){
   var data=props.data;var setData=props.setData;
   var ef={id:null,name:'',category:'Seeds',subType:'',unit:'kg',stock:'',buyPrice:'',sellPrice:'',minStock:'5',gstRate:0,pieces:'',pieceSize:'',pieceSizeUnit:'g'};
   var s0=useState(false);var showF=s0[0];var setShowF=s0[1];
+  var sb=useState(false);var showBulk=sb[0];var setShowBulk=sb[1];
+  var sbd=useState('');var bulkDist=sbd[0];var setBulkDist=sbd[1];
+  var sbdt=useState(toDay());var bulkDate=sbdt[0];var setBulkDate=sbdt[1];
+  var sbpm=useState('cash');var bulkPayMode=sbpm[0];var setBulkPayMode=sbpm[1];
+  var emptyRow=function(){return {name:'',category:'Pesticide',subType:'',unit:'kg',pieces:'',pieceSize:'',pieceSizeUnit:'g',buyPrice:'',sellPrice:'',gstRate:9,stock:'0',minStock:'5'};};
+  var sr=useState([emptyRow()]);var bulkRows=sr[0];var setBulkRows=sr[1];
+  function addBulkRow(){setBulkRows(function(prev){return [...prev,emptyRow()];});}
+  function remBulkRow(i){setBulkRows(function(prev){return prev.filter(function(_,idx){return idx!==i;});});}
+  function upBulkRow(i,v){setBulkRows(function(prev){return prev.map(function(r,idx){
+    if(idx!==i)return r;
+    var updated=Object.assign({},r,v);
+    if(v.category){var gi=getGST(v.category);updated.gstRate=gi.gst;}
+    return updated;
+  });});}
+  function saveBulk(){
+    if(!bulkDist)return alert('Please select a distributor');
+    var valid=bulkRows.filter(function(r){return r.name&&r.sellPrice;});
+    if(!valid.length)return alert('Fill at least one product name and selling price');
+    var newProds=valid.map(function(r){
+      var gi=getGST(r.category);
+      var gr=r.gstRate!=null?Number(r.gstRate):gi.gst;
+      var pc=Number(r.pieces)||0;var ps=Number(r.pieceSize)||0;var psu=r.pieceSizeUnit||'g';
+      var finalStock=Number(r.stock)||0;
+      if(pc>0&&ps>0){finalStock=Math.round(pc*sib(ps,psu)*1000)/1000;}
+      return Object.assign({},r,{id:genId(),gstRate:gr,stock:finalStock,pieces:pc||'',pieceSize:ps||'',pieceSizeUnit:psu});
+    });
+    // Create purchase record linked to distributor
+    var purchItems=newProds.map(function(p){
+      var gr=Number(p.gstRate)||0;
+      var pc=Number(p.pieces)||0;var ps=Number(p.pieceSize)||0;var psu=p.pieceSizeUnit||'g';
+      var qty=pc>0&&ps>0?Math.round(pc*sib(ps,psu)*1000)/1000:Number(p.stock)||0;
+      var rate=Number(p.buyPrice)||0;
+      var totalIncl=qty*rate;
+      var totalBase=gr>0?totalIncl*100/(100+gr):totalIncl;
+      var cgst=totalBase*gr/2/100;
+      return {productId:p.id,productName:p.name,qty:qty,pieces:pc,pieceSize:ps,pieceSizeUnit:psu,
+        gstRate:gr,ratePerUnit:rate,totalBase:totalBase,cgstPaid:cgst,sgstPaid:cgst,gstPaid:cgst*2,totalWithGst:totalIncl};
+    });
+    var totalAmt=purchItems.reduce(function(s,it){return s+it.totalWithGst;},0);
+    var totalGst=purchItems.reduce(function(s,it){return s+it.gstPaid;},0);
+    var paidAmt=bulkPayMode==='due'?0:totalAmt;
+    var purchase={id:genId(),distributorId:bulkDist,date:bulkDate,items:purchItems,
+      totalAmount:totalAmt,totalGstPaid:totalGst,paid:paidAmt,paymentMode:bulkPayMode,
+      notes:'Added via bulk stock entry',stockAdded:true};
+    var products=[...data.products,...newProds];
+    var purchases=[...data.purchases,purchase];
+    var nd=Object.assign({},data,{products:products,purchases:purchases});setData(nd);saveData(nd);
+    setShowBulk(false);setBulkRows([emptyRow()]);setBulkDist('');setBulkDate(toDay());setBulkPayMode('cash');
+    alert(newProds.length+' product(s) added to stock and purchase recorded under distributor!');
+  }
   var s1=useState('');var srch=s1[0];var setSrch=s1[1];
   var s2=useState('All');var cat=s2[0];var setCat=s2[1];
   var s3=useState(ef);var form=s3[0];var setForm=s3[1];
@@ -337,7 +387,7 @@ function Stock(props){
       h('select',{value:cat,onChange:function(ev){setCat(ev.target.value);},style:Object.assign({},IS,{width:'auto'})},
         h('option',null,'All'),...CATS.map(function(c){return h('option',{key:c},c);})
       ),
-      h(Btn,{onClick:function(){setForm(ef);setShowF(true);}},'+ Add Product')
+      h(Btn,{onClick:function(){setShowBulk(true);}},'+ Add Products')
     ),
     h('div',{style:{overflowX:'auto'}},
       h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:1000}},
@@ -422,7 +472,138 @@ function Stock(props){
         )
       )
     ),
-    showF&&h(Modal,{title:form.id?'Edit Product':'Add Product',onClose:function(){setShowF(false);}},
+    showBulk&&h(Modal,{title:'Add Products (Bulk Entry)',wide:true,onClose:function(){setShowBulk(false);}},
+      h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:14,background:'#f5f8ff',borderRadius:10,padding:'12px 14px'}},
+        h('div',null,
+          h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:4}},'Distributor *'),
+          h('select',{value:bulkDist,onChange:function(ev){setBulkDist(ev.target.value);},style:Object.assign({},IS,{fontSize:13})},
+            h('option',{value:''},'-- Select distributor --'),
+            data.distributors.map(function(d){return h('option',{key:d.id,value:d.id},d.name+(d.company?' ('+d.company+')':''));})
+          )
+        ),
+        h('div',null,
+          h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:4}},'Date of Purchase *'),
+          h('input',{type:'date',value:bulkDate,onChange:function(ev){setBulkDate(ev.target.value);},style:Object.assign({},IS,{fontSize:13})})
+        ),
+        h('div',null,
+          h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:6}},'Payment Mode'),
+          h('div',{style:{display:'flex',gap:6,flexWrap:'wrap'}},
+            [['cash','💵 Cash'],['online','📱 Online'],['cheque','🏦 Cheque'],['due','⏳ Due']].map(function(opt){
+              return h('button',{key:opt[0],type:'button',
+                onClick:function(){setBulkPayMode(opt[0]);},
+                style:{padding:'5px 10px',border:'1.5px solid '+(bulkPayMode===opt[0]?'#185FA5':'#ddd'),
+                  borderRadius:6,cursor:'pointer',fontSize:11,fontWeight:bulkPayMode===opt[0]?600:400,
+                  background:bulkPayMode===opt[0]?'#185FA5':'#fff',
+                  color:bulkPayMode===opt[0]?'#fff':'#555'}},opt[1]);
+            })
+          )
+        )
+      ),
+      h('p',{style:{fontSize:13,color:'#888',marginBottom:12}},'Fill all products at once. Each row = one product. Press "+ Add Row" for more.'),
+      h('div',{style:{overflowX:'auto'}},
+        h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:900}},
+          h('thead',null,
+            h('tr',{style:{background:'#185FA5'}},
+              ['Product Name','Category','Unit','Pieces','Size/pc','GST%','Buy ₹/pc','Sell ₹/pc','Total Stock','Total Buy','Total Sell',''].map(function(hd){
+                return h('th',{key:hd,style:{padding:'8px 6px',color:'#fff',fontWeight:500,whiteSpace:'nowrap',textAlign:'left',fontSize:11}},hd);
+              })
+            )
+          ),
+          h('tbody',null,
+            bulkRows.map(function(row,i){
+              var gr=Number(row.gstRate)||0;
+              var pc=Number(row.pieces)||0;
+              var ps=Number(row.pieceSize)||0;
+              var psu=row.pieceSizeUnit||'g';
+              var bp=Number(row.buyPrice)||0;
+              var sp=Number(row.sellPrice)||0;
+              var totalStock=pc>0&&ps>0?Math.round(pc*sib(ps,psu)*1000)/1000:0;
+              var totalBuy=pc>0?pc*bp:0;
+              var totalSell=pc>0?pc*sp:0;
+              var profit=totalSell-totalBuy;
+              var IS2={width:'100%',boxSizing:'border-box',padding:'5px 6px',border:'0.5px solid #ddd',borderRadius:4,fontSize:12,outline:'none',background:'#fff'};
+              return h('tr',{key:i,style:{borderBottom:'0.5px solid #eee',background:i%2===0?'#fff':'#fafafa'}},
+                // Product name
+                h('td',{style:{padding:'4px 4px'}},
+                  h('input',{type:'text',placeholder:'e.g. Tapuz',value:row.name,onChange:function(ev){upBulkRow(i,{name:ev.target.value});},style:IS2})
+                ),
+                // Category
+                h('td',{style:{padding:'4px 4px'}},
+                  h('select',{value:row.category,onChange:function(ev){upBulkRow(i,{category:ev.target.value});},style:IS2},
+                    CATS.map(function(cat){return h('option',{key:cat},cat);})
+                  )
+                ),
+                // Unit
+                h('td',{style:{padding:'4px 4px'}},
+                  h('select',{value:row.unit,onChange:function(ev){upBulkRow(i,{unit:ev.target.value});},style:Object.assign({},IS2,{width:70})},
+                    ['kg','litre','g','ml','piece','bag','box'].map(function(u){return h('option',{key:u},u);})
+                  )
+                ),
+                // Pieces
+                h('td',{style:{padding:'4px 4px'}},
+                  h('input',{type:'number',placeholder:'e.g. 10',value:row.pieces,onChange:function(ev){upBulkRow(i,{pieces:ev.target.value});},style:Object.assign({},IS2,{width:70})})
+                ),
+                // Size per piece
+                h('td',{style:{padding:'4px 4px'}},
+                  h('div',{style:{display:'flex',gap:2}},
+                    h('input',{type:'number',placeholder:'250',value:row.pieceSize,onChange:function(ev){upBulkRow(i,{pieceSize:ev.target.value});},style:Object.assign({},IS2,{width:55})}),
+                    h('select',{value:row.pieceSizeUnit,onChange:function(ev){upBulkRow(i,{pieceSizeUnit:ev.target.value});},style:Object.assign({},IS2,{width:50,padding:'5px 2px'})},
+                      ['g','ml','kg','litre'].map(function(u){return h('option',{key:u},u);})
+                    )
+                  )
+                ),
+                // GST
+                h('td',{style:{padding:'4px 4px'}},
+                  h('select',{value:row.gstRate,onChange:function(ev){upBulkRow(i,{gstRate:Number(ev.target.value)});},style:Object.assign({},IS2,{width:60})},
+                    [0,5,9,12,18].map(function(r){return h('option',{key:r,value:r},r+'%');})
+                  )
+                ),
+                // Buy price per piece
+                h('td',{style:{padding:'4px 4px'}},
+                  h('input',{type:'number',placeholder:'360',value:row.buyPrice,onChange:function(ev){upBulkRow(i,{buyPrice:ev.target.value});},style:Object.assign({},IS2,{width:80})})
+                ),
+                // Sell price per piece
+                h('td',{style:{padding:'4px 4px'}},
+                  h('input',{type:'number',placeholder:'450',value:row.sellPrice,onChange:function(ev){upBulkRow(i,{sellPrice:ev.target.value});},style:Object.assign({},IS2,{width:80})})
+                ),
+                // Auto: Total stock
+                h('td',{style:{padding:'4px 8px',background:'#f0f4ff',textAlign:'center'}},
+                  totalStock>0?h('span',{style:{fontWeight:600,color:'#185FA5',fontSize:12}},fmt(totalStock)+' '+row.unit):h('span',{style:{color:'#bbb'}},'—')
+                ),
+                // Auto: Total buy
+                h('td',{style:{padding:'4px 8px',background:'#fff8f0',textAlign:'center'}},
+                  totalBuy>0?h('div',null,
+                    h('p',{style:{fontWeight:600,color:'#854F0B',margin:'0 0 1px',fontSize:12}},'₹'+fmt(totalBuy)),
+                    gr>0&&h('p',{style:{fontSize:9,color:'#888',margin:0}},'C+S: ₹'+fmt(totalBuy*100/(100+gr)*gr/2/100)+'+₹'+fmt(totalBuy*100/(100+gr)*gr/2/100))
+                  ):h('span',{style:{color:'#bbb'}},'—')
+                ),
+                // Auto: Total sell + profit
+                h('td',{style:{padding:'4px 8px',background:'#f0fff4',textAlign:'center'}},
+                  totalSell>0?h('div',null,
+                    h('p',{style:{fontWeight:600,color:'#3B6D11',margin:'0 0 1px',fontSize:12}},'₹'+fmt(totalSell)),
+                    gr>0&&h('p',{style:{fontSize:9,color:'#888',margin:'0 0 1px'}},'C+S: ₹'+fmt(totalSell*100/(100+gr)*gr/2/100)+'+₹'+fmt(totalSell*100/(100+gr)*gr/2/100)),
+                    totalBuy>0&&h('p',{style:{fontSize:10,fontWeight:600,color:profit>=0?'#3B6D11':'#A32D2D',margin:0}},'P: ₹'+fmt(profit))
+                  ):h('span',{style:{color:'#bbb'}},'—')
+                ),
+                // Remove
+                h('td',{style:{padding:'4px 4px',textAlign:'center'}},
+                  bulkRows.length>1&&h('button',{onClick:function(){remBulkRow(i);},style:{background:'#FCEBEB',color:'#A32D2D',border:'none',borderRadius:4,padding:'3px 8px',cursor:'pointer',fontSize:12}},'✕')
+                )
+              );
+            })
+          )
+        )
+      ),
+      h('div',{style:{marginTop:10,padding:'8px 12px',background:'#f5f8ff',borderRadius:8,fontSize:12,color:'#555'}},'💡 Blue = auto calculated | Orange = total buying | Green = total selling + profit'),
+      h('div',{style:{display:'flex',gap:10,marginTop:12,justifyContent:'space-between',alignItems:'center'}},
+        h('button',{onClick:addBulkRow,style:{background:'#E6F1FB',color:'#185FA5',border:'none',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontWeight:500,fontSize:13}},'+ Add Row'),
+        h('div',{style:{display:'flex',gap:10}},
+          h(Btn,{variant:'secondary',onClick:function(){setShowBulk(false);}},'Cancel'),
+          h(Btn,{onClick:saveBulk},'💾 Save All Products ('+bulkRows.filter(function(r){return r.name;}).length+')')
+        )
+      )
+    ),
+        showF&&h(Modal,{title:form.id?'Edit Product':'Add Product',onClose:function(){setShowF(false);}},
       h(Inp,{label:'Product name *',value:form.name,onChange:function(ev){sf({name:ev.target.value});},placeholder:'e.g. Saaf, Coragen, Urea'}),
       h(Sel,{label:'Category',value:form.category,onChange:function(ev){var gi=getGST(ev.target.value);sf({category:ev.target.value,gstRate:gi.gst,subType:''});}},CATS.map(function(c){return h('option',{key:c},c);})),
       form.category==='Fertilizer'&&h(Sel,{label:'Fertilizer type',value:form.subType,onChange:function(ev){sf({subType:ev.target.value});}},h('option',{value:''},'Select'),...FERT_TYPES.map(function(t){return h('option',{key:t},t);})),
@@ -493,8 +674,58 @@ function Stock(props){
 function Distributors(props){
   var data=props.data;var setData=props.setData;
   var ef={id:null,name:'',phone:'',address:'',company:''};
-  var ep={date:toDay(),items:[{productId:'',pieces:'',pieceSize:'',pieceSizeUnit:'g',price:'',gstRate:9}],paid:'',notes:''};
+  var ep={date:toDay(),items:[{productId:'',pieces:'',pieceSize:'',pieceSizeUnit:'g',price:'',gstRate:9}],paid:'',paymentMode:'cash',notes:''};
   var s0=useState(false);var showF=s0[0];var setShowF=s0[1];
+  var sb=useState(false);var showBulk=sb[0];var setShowBulk=sb[1];
+  var sbd=useState('');var bulkDist=sbd[0];var setBulkDist=sbd[1];
+  var sbdt=useState(toDay());var bulkDate=sbdt[0];var setBulkDate=sbdt[1];
+  var sbpm=useState('cash');var bulkPayMode=sbpm[0];var setBulkPayMode=sbpm[1];
+  var emptyRow=function(){return {name:'',category:'Pesticide',subType:'',unit:'kg',pieces:'',pieceSize:'',pieceSizeUnit:'g',buyPrice:'',sellPrice:'',gstRate:9,stock:'0',minStock:'5'};};
+  var sr=useState([emptyRow()]);var bulkRows=sr[0];var setBulkRows=sr[1];
+  function addBulkRow(){setBulkRows(function(prev){return [...prev,emptyRow()];});}
+  function remBulkRow(i){setBulkRows(function(prev){return prev.filter(function(_,idx){return idx!==i;});});}
+  function upBulkRow(i,v){setBulkRows(function(prev){return prev.map(function(r,idx){
+    if(idx!==i)return r;
+    var updated=Object.assign({},r,v);
+    if(v.category){var gi=getGST(v.category);updated.gstRate=gi.gst;}
+    return updated;
+  });});}
+  function saveBulk(){
+    if(!bulkDist)return alert('Please select a distributor');
+    var valid=bulkRows.filter(function(r){return r.name&&r.sellPrice;});
+    if(!valid.length)return alert('Fill at least one product name and selling price');
+    var newProds=valid.map(function(r){
+      var gi=getGST(r.category);
+      var gr=r.gstRate!=null?Number(r.gstRate):gi.gst;
+      var pc=Number(r.pieces)||0;var ps=Number(r.pieceSize)||0;var psu=r.pieceSizeUnit||'g';
+      var finalStock=Number(r.stock)||0;
+      if(pc>0&&ps>0){finalStock=Math.round(pc*sib(ps,psu)*1000)/1000;}
+      return Object.assign({},r,{id:genId(),gstRate:gr,stock:finalStock,pieces:pc||'',pieceSize:ps||'',pieceSizeUnit:psu});
+    });
+    // Create purchase record linked to distributor
+    var purchItems=newProds.map(function(p){
+      var gr=Number(p.gstRate)||0;
+      var pc=Number(p.pieces)||0;var ps=Number(p.pieceSize)||0;var psu=p.pieceSizeUnit||'g';
+      var qty=pc>0&&ps>0?Math.round(pc*sib(ps,psu)*1000)/1000:Number(p.stock)||0;
+      var rate=Number(p.buyPrice)||0;
+      var totalIncl=qty*rate;
+      var totalBase=gr>0?totalIncl*100/(100+gr):totalIncl;
+      var cgst=totalBase*gr/2/100;
+      return {productId:p.id,productName:p.name,qty:qty,pieces:pc,pieceSize:ps,pieceSizeUnit:psu,
+        gstRate:gr,ratePerUnit:rate,totalBase:totalBase,cgstPaid:cgst,sgstPaid:cgst,gstPaid:cgst*2,totalWithGst:totalIncl};
+    });
+    var totalAmt=purchItems.reduce(function(s,it){return s+it.totalWithGst;},0);
+    var totalGst=purchItems.reduce(function(s,it){return s+it.gstPaid;},0);
+    var paidAmt=bulkPayMode==='due'?0:totalAmt;
+    var purchase={id:genId(),distributorId:bulkDist,date:bulkDate,items:purchItems,
+      totalAmount:totalAmt,totalGstPaid:totalGst,paid:paidAmt,paymentMode:bulkPayMode,
+      notes:'Added via bulk stock entry',stockAdded:true};
+    var products=[...data.products,...newProds];
+    var purchases=[...data.purchases,purchase];
+    var nd=Object.assign({},data,{products:products,purchases:purchases});setData(nd);saveData(nd);
+    setShowBulk(false);setBulkRows([emptyRow()]);setBulkDist('');setBulkDate(toDay());setBulkPayMode('cash');
+    alert(newProds.length+' product(s) added to stock and purchase recorded under distributor!');
+  }
   var s1=useState(null);var showP=s1[0];var setShowP=s1[1];
   var s2=useState(null);var stockQ=s2[0];var setStockQ=s2[1];
   var s3=useState(ef);var form=s3[0];var setForm=s3[1];
@@ -536,12 +767,14 @@ function Distributors(props){
     });
     var totalAmount=viC.reduce(function(s,it){return s+it.totalWithGst;},0);
     var totalGstPaid=viC.reduce(function(s,it){return s+it.gstPaid;},0);
-    var purchase={id:genId(),distributorId:showP,date:pf.date,items:viC,totalAmount:totalAmount,totalGstPaid:totalGstPaid,paid:Number(pf.paid)||0,notes:pf.notes,stockAdded:false};
+    var purchase={id:genId(),distributorId:showP,date:pf.date,items:viC,totalAmount:totalAmount,totalGstPaid:totalGstPaid,paid:Number(pf.paid)||0,paymentMode:pf.paymentMode||'cash',notes:pf.notes,stockAdded:false};
     setShowP(null);setStockQ({purchase:purchase,viC:viC});setPf(ep);
   }
   function finishPurch(addToStock){
     var purchase=stockQ.purchase;var viC=stockQ.viC;
-    var finalPurchase=Object.assign({},purchase,{stockAdded:addToStock});
+    // if payment mode is due, paid=0; otherwise paid=totalAmount
+    var paidAmt=purchase.paymentMode==='due'?0:(Number(purchase.paid)||purchase.totalAmount);
+    var finalPurchase=Object.assign({},purchase,{stockAdded:addToStock,paid:paidAmt});
     var products=data.products;
     if(addToStock){
       products=data.products.map(function(p){
@@ -573,20 +806,72 @@ function Distributors(props){
       data.distributors.length===0?h('p',{style:{color:'#aaa',fontSize:14}},'No distributors yet'):
       data.distributors.map(function(d){
         var du=due(d.id);var bought=data.purchases.filter(function(p){return p.distributorId===d.id;}).reduce(function(s,p){return s+p.totalAmount;},0);
-        return h(Card,{key:d.id},
-          h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}},
-            h('div',null,h('p',{style:{fontWeight:500,fontSize:15,margin:'0 0 2px'}},d.name),h('p',{style:{fontSize:12,color:'#888',margin:0}},d.company||'')),
-            h(Btn,{small:true,onClick:function(){setForm(Object.assign({},d));setShowF(true);}},'Edit')
+        var dPurchases=data.purchases.filter(function(p){return p.distributorId===d.id;});
+        var showHistory=expandedDist===d.id;
+        return h(Card,{key:d.id,style:{marginBottom:12}},
+          h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8}},
+            h('div',null,
+              h('p',{style:{fontWeight:600,fontSize:15,margin:'0 0 2px'}},d.name),
+              d.company&&h('p',{style:{fontSize:12,color:'#888',margin:0}},d.company),
+              d.phone&&h('p',{style:{fontSize:12,color:'#555',margin:'2px 0 0'}},'📞 '+d.phone)
+            ),
+            h('div',{style:{display:'flex',gap:6}},
+              h(Btn,{small:true,onClick:function(){setForm(Object.assign({},d));setShowF(true);}},'Edit'),
+              h(Btn,{small:true,onClick:function(){setShowP(d.id);setPf(ep);}},'+Purchase')
+            )
           ),
-          d.phone&&h('p',{style:{fontSize:13,color:'#555',margin:'8px 0 4px'}},'📞 '+d.phone),
-          h('div',{style:{marginTop:10}},
-            h('div',{style:{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:6}},h('span',{style:{color:'#888'}},'Total purchased'),h('span',{style:{fontWeight:500}},'₹'+fmt(bought))),
-            du>0?h('div',{style:{padding:'8px 10px',background:'#FCEBEB',borderRadius:8,display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}},h('span',{style:{fontSize:12,color:'#A32D2D',fontWeight:500}},'⚠️ Amount due'),h('span',{style:{fontSize:13,color:'#A32D2D',fontWeight:600}},'₹'+fmt(du))):
-            h('div',{style:{padding:'6px 10px',background:'#EAF3DE',borderRadius:8,marginBottom:6}},h('span',{style:{fontSize:12,color:'#3B6D11'}},'✓ No pending payment'))
+          h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}},
+            h('div',{style:{background:'#f5f8ff',borderRadius:8,padding:'8px 10px',textAlign:'center'}},
+              h('p',{style:{fontSize:10,color:'#888',margin:'0 0 2px'}},'Total Purchased'),
+              h('p',{style:{fontSize:15,fontWeight:600,color:'#185FA5',margin:0}},'₹'+fmt(bought))
+            ),
+            du>0?h('div',{style:{background:'#FCEBEB',borderRadius:8,padding:'8px 10px',textAlign:'center'}},
+              h('p',{style:{fontSize:10,color:'#A32D2D',margin:'0 0 2px'}},'⚠️ Amount Due'),
+              h('p',{style:{fontSize:15,fontWeight:600,color:'#A32D2D',margin:0}},'₹'+fmt(du))
+            ):h('div',{style:{background:'#EAF3DE',borderRadius:8,padding:'8px 10px',textAlign:'center'}},
+              h('p',{style:{fontSize:10,color:'#3B6D11',margin:'0 0 2px'}},'Payment Status'),
+              h('p',{style:{fontSize:13,fontWeight:500,color:'#3B6D11',margin:0}},'✓ All Clear')
+            )
           ),
-          h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
-            h(Btn,{small:true,onClick:function(){setShowP(d.id);setPf(ep);}},'+ Record Purchase'),
-            du>0&&h(Btn,{small:true,onClick:function(){markPaid(d.id);}},'Mark Paid')
+          du>0&&h('div',{style:{marginBottom:8}},h(Btn,{small:true,onClick:function(){markPaid(d.id);}},'✓ Mark All Paid')),
+          dPurchases.length>0&&h('button',{
+            onClick:function(){setExpandedDist(showHistory?null:d.id);},
+            style:{width:'100%',background:'#f0f4ff',border:'1px solid #d0e4ff',borderRadius:8,padding:'7px',cursor:'pointer',fontSize:12,color:'#185FA5',fontWeight:500,marginBottom:showHistory?8:0}
+          },(showHistory?'▲ Hide':'▼ View')+' Purchase History ('+dPurchases.length+' bills)'),
+          showHistory&&h('div',{style:{maxHeight:320,overflowY:'auto'}},
+            dPurchases.slice().reverse().map(function(purch){
+              var pm=purch.paymentMode||'cash';
+              var payLabel=pm==='due'?'⏳ Due':pm==='online'?'📱 Online':pm==='cheque'?'🏦 Cheque':'💵 Cash';
+              var payColor=pm==='due'?'#854F0B':'#3B6D11';
+              var payBg=pm==='due'?'#FAEEDA':'#EAF3DE';
+              return h('div',{key:purch.id,style:{background:'#fafafa',border:'0.5px solid #e0e8ff',borderRadius:8,padding:'10px',marginBottom:6}},
+                h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}},
+                  h('span',{style:{fontSize:12,color:'#333',fontWeight:600}},'📅 '+purch.date),
+                  h('span',{style:{background:payBg,color:payColor,borderRadius:20,padding:'2px 8px',fontSize:11,fontWeight:500}},payLabel)
+                ),
+                h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:11,marginBottom:6}},
+                  h('thead',null,h('tr',{style:{background:'#e8eef8'}},
+                    ['Product','Qty','Rate','Total'].map(function(hd){return h('th',{key:hd,style:{padding:'4px 6px',textAlign:'left',fontWeight:500,fontSize:11}},hd);})
+                  )),
+                  h('tbody',null,purch.items.map(function(it,ii){
+                    var prod=data.products.find(function(p){return p.id===it.productId;})||null;
+                    return h('tr',{key:ii,style:{borderBottom:'0.5px solid #eee'}},
+                      h('td',{style:{padding:'4px 6px',fontWeight:500}},prod?prod.name:'Product'),
+                      h('td',{style:{padding:'4px 6px'}},fmt(it.qty)+' '+(prod?prod.unit:'kg')),
+                      h('td',{style:{padding:'4px 6px'}},'₹'+fmt(it.ratePerUnit||0)+'/'+( prod?prod.unit:'kg')),
+                      h('td',{style:{padding:'4px 6px',color:'#185FA5',fontWeight:600}},'₹'+fmt(it.totalWithGst||0))
+                    );
+                  }))
+                ),
+                h('div',{style:{display:'flex',justifyContent:'space-between',paddingTop:4,borderTop:'0.5px solid #ddd'}},
+                  h('span',{style:{fontSize:11,color:'#888'}},'GST paid: ₹'+fmt(purch.totalGstPaid||0)),
+                  h('div',null,
+                    h('span',{style:{fontWeight:700,fontSize:13,color:'#185FA5'}},'₹'+fmt(purch.totalAmount)),
+                    (purch.totalAmount-(purch.paid||0))>0&&h('span',{style:{fontSize:11,color:'#A32D2D',marginLeft:8}},'Due: ₹'+fmt(purch.totalAmount-(purch.paid||0)))
+                  )
+                )
+              );
+            })
           )
         );
       })
@@ -659,7 +944,21 @@ function Distributors(props){
           h('div',{style:{background:'#185FA5',borderRadius:8,padding:'8px',textAlign:'center'}},h('p',{style:{fontSize:10,color:'rgba(255,255,255,0.8)',margin:'0 0 3px'}},'Total (incl GST)'),h('p',{style:{fontSize:14,fontWeight:600,color:'#fff',margin:0}},'₹'+fmt(purTotal)))
         )
       ),
-      h(Inp,{label:'Amount paid now ₹',type:'number',value:pf.paid,onChange:function(ev){setPf(function(p){return Object.assign({},p,{paid:ev.target.value});});},placeholder:'0'}),
+      h('div',{style:{marginBottom:14}},
+        h('label',{style:{display:'block',fontSize:13,color:'#666',marginBottom:6}},'Payment Mode'),
+        h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
+          [['cash','💵 Cash'],['online','📱 Online/UPI'],['cheque','🏦 Cheque'],['due','⏳ Due/Credit']].map(function(opt){
+            return h('button',{key:opt[0],type:'button',
+              onClick:function(){setPf(function(p){return Object.assign({},p,{paymentMode:opt[0]});});},
+              style:{padding:'8px 14px',border:'2px solid '+(pf.paymentMode===opt[0]?'#185FA5':'#ddd'),
+                borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:pf.paymentMode===opt[0]?600:400,
+                background:pf.paymentMode===opt[0]?'#E6F1FB':'#fff',
+                color:pf.paymentMode===opt[0]?'#185FA5':'#555'}},opt[1]);
+          })
+        )
+      ),
+      pf.paymentMode!=='due'&&h(Inp,{label:'Amount paid ₹',type:'number',value:pf.paid,onChange:function(ev){setPf(function(p){return Object.assign({},p,{paid:ev.target.value});});},placeholder:'0'}),
+      pf.paymentMode==='due'&&h('div',{style:{background:'#FAEEDA',borderRadius:8,padding:'10px 12px',marginBottom:14,fontSize:13,color:'#854F0B'}},'⏳ Full amount will be added to distributor due balance'),
       h(Inp,{label:'Notes (optional)',value:pf.notes,onChange:function(ev){setPf(function(p){return Object.assign({},p,{notes:ev.target.value});});}}),
       h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end'}},h(Btn,{variant:'secondary',onClick:function(){setShowP(null);}},'Cancel'),h(Btn,{onClick:savePurch},'Save Purchase'))
     ),
@@ -730,6 +1029,56 @@ function Farmers(props){
   var data=props.data;var setData=props.setData;
   var ef={id:null,name:'',phone:'',village:'',type:'Regular',discount:'0',notes:''};
   var s0=useState(false);var showF=s0[0];var setShowF=s0[1];
+  var sb=useState(false);var showBulk=sb[0];var setShowBulk=sb[1];
+  var sbd=useState('');var bulkDist=sbd[0];var setBulkDist=sbd[1];
+  var sbdt=useState(toDay());var bulkDate=sbdt[0];var setBulkDate=sbdt[1];
+  var sbpm=useState('cash');var bulkPayMode=sbpm[0];var setBulkPayMode=sbpm[1];
+  var emptyRow=function(){return {name:'',category:'Pesticide',subType:'',unit:'kg',pieces:'',pieceSize:'',pieceSizeUnit:'g',buyPrice:'',sellPrice:'',gstRate:9,stock:'0',minStock:'5'};};
+  var sr=useState([emptyRow()]);var bulkRows=sr[0];var setBulkRows=sr[1];
+  function addBulkRow(){setBulkRows(function(prev){return [...prev,emptyRow()];});}
+  function remBulkRow(i){setBulkRows(function(prev){return prev.filter(function(_,idx){return idx!==i;});});}
+  function upBulkRow(i,v){setBulkRows(function(prev){return prev.map(function(r,idx){
+    if(idx!==i)return r;
+    var updated=Object.assign({},r,v);
+    if(v.category){var gi=getGST(v.category);updated.gstRate=gi.gst;}
+    return updated;
+  });});}
+  function saveBulk(){
+    if(!bulkDist)return alert('Please select a distributor');
+    var valid=bulkRows.filter(function(r){return r.name&&r.sellPrice;});
+    if(!valid.length)return alert('Fill at least one product name and selling price');
+    var newProds=valid.map(function(r){
+      var gi=getGST(r.category);
+      var gr=r.gstRate!=null?Number(r.gstRate):gi.gst;
+      var pc=Number(r.pieces)||0;var ps=Number(r.pieceSize)||0;var psu=r.pieceSizeUnit||'g';
+      var finalStock=Number(r.stock)||0;
+      if(pc>0&&ps>0){finalStock=Math.round(pc*sib(ps,psu)*1000)/1000;}
+      return Object.assign({},r,{id:genId(),gstRate:gr,stock:finalStock,pieces:pc||'',pieceSize:ps||'',pieceSizeUnit:psu});
+    });
+    // Create purchase record linked to distributor
+    var purchItems=newProds.map(function(p){
+      var gr=Number(p.gstRate)||0;
+      var pc=Number(p.pieces)||0;var ps=Number(p.pieceSize)||0;var psu=p.pieceSizeUnit||'g';
+      var qty=pc>0&&ps>0?Math.round(pc*sib(ps,psu)*1000)/1000:Number(p.stock)||0;
+      var rate=Number(p.buyPrice)||0;
+      var totalIncl=qty*rate;
+      var totalBase=gr>0?totalIncl*100/(100+gr):totalIncl;
+      var cgst=totalBase*gr/2/100;
+      return {productId:p.id,productName:p.name,qty:qty,pieces:pc,pieceSize:ps,pieceSizeUnit:psu,
+        gstRate:gr,ratePerUnit:rate,totalBase:totalBase,cgstPaid:cgst,sgstPaid:cgst,gstPaid:cgst*2,totalWithGst:totalIncl};
+    });
+    var totalAmt=purchItems.reduce(function(s,it){return s+it.totalWithGst;},0);
+    var totalGst=purchItems.reduce(function(s,it){return s+it.gstPaid;},0);
+    var paidAmt=bulkPayMode==='due'?0:totalAmt;
+    var purchase={id:genId(),distributorId:bulkDist,date:bulkDate,items:purchItems,
+      totalAmount:totalAmt,totalGstPaid:totalGst,paid:paidAmt,paymentMode:bulkPayMode,
+      notes:'Added via bulk stock entry',stockAdded:true};
+    var products=[...data.products,...newProds];
+    var purchases=[...data.purchases,purchase];
+    var nd=Object.assign({},data,{products:products,purchases:purchases});setData(nd);saveData(nd);
+    setShowBulk(false);setBulkRows([emptyRow()]);setBulkDist('');setBulkDate(toDay());setBulkPayMode('cash');
+    alert(newProds.length+' product(s) added to stock and purchase recorded under distributor!');
+  }
   var s1=useState('');var srch=s1[0];var setSrch=s1[1];
   var s2=useState(ef);var form=s2[0];var setForm=s2[1];
   function save(){

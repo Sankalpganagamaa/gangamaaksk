@@ -1517,34 +1517,65 @@ function IPMSPanel(props){
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
-          model:'claude-sonnet-4-20250514',max_tokens:1000,
+          model:'claude-sonnet-4-20250514',max_tokens:1500,
           messages:[{role:'user',content:[
             {type:'image',source:{type:'base64',media_type:mediaType,data:base64}},
-            {type:'text',text:'This is an Indian agricultural shop distributor bill/invoice. Extract ALL product line items. Return ONLY a valid JSON array with no extra text. Each item: {"name":"product name","pieces":number or null,"pieceSize":number or null,"pieceSizeUnit":"g or ml or kg or litre","qty":total quantity as number,"unit":"kg or litre or g or ml","ratePerUnit":price per unit as number,"total":total price as number,"gst":gst percentage as number 0 or 5 or 9 or 12 or 18}'}
+            {type:'text',text:'This is an Indian agricultural distributor bill written in Hindi/English. Extract ALL line items carefully. Return ONLY a valid JSON array. Each object must have exactly these fields: name (string, product name in English), pieces (number or null, how many packets/bottles), pieceSize (number or null), pieceSizeUnit (string: g or ml or kg or litre), qty (number, total quantity in base unit), unit (string: kg or litre), ratePerUnit (number, rate per kg or litre), total (number, total value), gst (number: 0 or 5 or 9). For pesticides use gst 9, for fertilizers use gst 5, for seeds use gst 0. Return ONLY the JSON array, no explanation.'}
           ]}]
         })
       })
-      .then(function(r){return r.json();})
+      .then(function(r){
+        if(!r.ok){
+          return r.text().then(function(t){
+            throw new Error('API Error '+r.status+': '+t.slice(0,100));
+          });
+        }
+        return r.json();
+      })
       .then(function(result){
         setProcessing(false);
         var text='';
         if(result.content&&result.content[0])text=result.content[0].text||'';
         try{
           var clean=text.replace(/```json/g,'').replace(/```/g,'').trim();
+          // handle case where response starts/ends with non-JSON
+          var arrStart=clean.indexOf('[');
+          var arrEnd=clean.lastIndexOf(']');
+          if(arrStart>=0&&arrEnd>arrStart)clean=clean.slice(arrStart,arrEnd+1);
           var items=JSON.parse(clean);
+          if(!Array.isArray(items)||items.length===0)throw new Error('No items found');
           var matched=items.map(function(item){
             var prod=data.products.find(function(p){
-              return p.name.toLowerCase().indexOf(item.name.toLowerCase())>=0||
-                     item.name.toLowerCase().indexOf(p.name.toLowerCase())>=0;
+              var pn=p.name.toLowerCase();
+              var iname=(item.name||'').toLowerCase();
+              return pn.indexOf(iname)>=0||iname.indexOf(pn)>=0||
+                     (iname.length>3&&pn.indexOf(iname.slice(0,4))>=0);
             });
             return Object.assign({},item,{productId:prod?prod.id:'',matched:!!prod,confirmed:false});
           });
           setParsedItems(matched);
         }catch(err){
-          alert('Could not read bill automatically. Please check image is clear and try again.');
+          setProcessing(false);
+          // Show manual entry option
+          var doManual=confirm('AI could not automatically read this bill.'+String.fromCharCode(10)+'This may be because:'+String.fromCharCode(10)+'1. Bill image is not clear enough'+String.fromCharCode(10)+'2. Writing is in Hindi only'+String.fromCharCode(10)+String.fromCharCode(10)+'Click OK to enter items manually instead.');
+          if(doManual){
+            // Create empty rows for manual entry
+            var emptyRows=[];
+            for(var x=0;x<5;x++)emptyRows.push({name:'',pieces:null,pieceSize:null,pieceSizeUnit:'g',qty:0,unit:'kg',ratePerUnit:0,total:0,gst:9,productId:'',matched:false,confirmed:false});
+            setParsedItems(emptyRows);
+          }
         }
       })
-      .catch(function(){setProcessing(false);alert('Error reading bill. Please try again.');});
+      .catch(function(err){
+        setProcessing(false);
+        var msg=err&&err.message?err.message:'Unknown error';
+        var doManual=confirm('Could not connect to AI reader. Error: '+msg.slice(0,80)+String.fromCharCode(10)+String.fromCharCode(10)+'Click OK to enter bill items manually instead.');
+        if(doManual){
+          var emptyRows2=[];
+          for(var y=0;y<5;y++)emptyRows2.push({name:'',pieces:null,pieceSize:null,pieceSizeUnit:'g',qty:0,unit:'kg',ratePerUnit:0,total:0,gst:9,productId:'',matched:false,confirmed:false});
+          setParsedItems(emptyRows2);
+        }
+      });
     };
     reader.readAsDataURL(file);
   }
@@ -1715,7 +1746,10 @@ function IPMSPanel(props){
           );
         }),
         h('div',{style:{display:'flex',gap:10,justifyContent:'space-between',alignItems:'center',marginTop:14,paddingTop:12,borderTop:'1px solid #eee'}},
-          h('p',{style:{fontSize:13,color:'#888',margin:0}},'Only confirmed items with a selected product will be added to stock'),
+          h('div',{style:{display:'flex',gap:8,alignItems:'center'}},
+            h('p',{style:{fontSize:13,color:'#888',margin:0}},'Only confirmed items with a selected product will be added to stock'),
+            h('button',{onClick:function(){setParsedItems(function(prev){return [...prev,{name:'',pieces:null,pieceSize:null,pieceSizeUnit:'g',qty:0,unit:'kg',ratePerUnit:0,total:0,gst:9,productId:'',matched:false,confirmed:false}];});},style:{background:'#E6F1FB',color:'#185FA5',border:'none',borderRadius:6,padding:'5px 12px',cursor:'pointer',fontSize:12,fontWeight:500}},'+ Add Row')
+          ),
           h('div',{style:{display:'flex',gap:8}},
             h(Btn,{variant:'secondary',onClick:function(){setParsedItems(null);}},'Cancel'),
             h(Btn,{onClick:addConfirmedToStock},'Add '+parsedItems.filter(function(it){return it.confirmed&&it.productId;}).length+' Items to Stock')
